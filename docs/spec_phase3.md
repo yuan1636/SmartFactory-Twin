@@ -421,12 +421,13 @@ export function effectiveState(status: string, runningStatus: string): Effective
 | 区块 | 内容 | 数据来源 |
 |---|---|---|
 | KPI（4 卡） | 已完成订单 / 计划产量 / 实际产量 / 合格率 / 设备利用率（5 项取 4 张主卡 + 1 张副卡） | `GET /stats/production?start&end` |
-| 图表 1 柱状 | 四条产线产量对比（计划 vs 实际） | 逐产线调 `GET /stats/production?line_id=LINE-A1` 等 4 次，前端合并 |
+| 图表 1 柱状 | 四条产线产量对比（计划 vs 实际） | 逐产线调 `GET /stats/production?start&end&line_id=LINE-A1` 等 4 次，前端合并 |
 | 图表 2 折线 | 最近 20 单的合格率与完成率走势 | `GET /orders?page_size=20` |
 | 表格 | 订单列表：订单号 / 产线 / 计划数 / 实际数 / 合格率 / 完成率 / 状态 | `GET /orders?page=1&page_size=20` |
-| 口径说明 | 底部灰字：「统计窗口为最近 1 小时，合格率 = 合格数 / 实际数」 | 静态文案 |
+| 口径说明 | 底部灰字：「统计窗口 {start} ~ {end}，合格率 = 合格数 / 实际数」 | 后端返回的 `start` / `end` |
 
-- 后端 `/stats/production` 默认窗口为最近 1 小时，页面不再传 `start/end`（避免与后端默认口径打架），页面显式展示后端返回的 `start` / `end`。
+- **必须显式传时间窗，不能吃后端默认值**：后端 `/stats/production` 不带参数时窗口是「最近 1 小时」，而模拟器按 30 件/小时推进、订单跨数小时才完成，实测该窗口返回全 0（`orders_completed=0`、`qualified_rate=0.0`），页面会变成四张 0 卡片。同一时刻改用 24 小时窗口实测为：`orders_completed=20`、`planned=2880`、`actual=2412`、`qualified_rate=0.9652`、`utilization=0.8679`。故页面默认传 `start = now - 24h`、`end = now`，并提供 1h / 24h 切换；空数据时显示 `EmptyState`「当前窗口内没有已完工订单」，而不是显示 0% 合格率。
+- 4 个产线请求必须并行（`Promise.all`），串行会让 30 秒轮询变成 4 次接续等待。
 
 ### 5.5 页面四：设备告警与维护 `/alerts`
 
@@ -506,7 +507,10 @@ export async function apiGet<T>(path: string, params?: Record<string, string | n
 
 - base = `import.meta.env.VITE_API_BASE`。
 - 超时 8 秒（`AbortController`），超时抛 `ApiError('TIMEOUT', '请求超时', 0)`。
-- 后端错误体统一为 `{ code, message }`（第 2 阶段 4.0 约定，`Content-Type: application/json; charset=utf-8`），直接映射到 `ApiError`。
+- **时间参数必须走 `URLSearchParams` / `encodeURIComponent`**（强制）。后端要的是 ISO 8601，形如 `2026-11-23T11:41:35+00:00`，那个 `+` 若不编码，服务端会解析成空格并直接返回 `422 VALIDATION_ERROR`（2026-11-24 实测踩到）。`new URLSearchParams({start, end})` 会把 `+` 编成 `%2B`，用它拼参数即可，**禁止手写字符串拼接 URL**。
+- 后端错误体有两种形态，都要解析：
+  - 业务错误：`{ "code": "...", "message": "..." }`；
+  - 参数校验错误：`{ "code": "VALIDATION_ERROR", "message": "请求参数校验失败", "detail": [{ "field": "query.start", "message": "...", "type": "..." }] }`。此时前端文案取 `detail[0].field + '：' + detail[0].message`，便于定位是哪个参数写错。
 - 不做自动重试（除 WS 外）。重试交给页面显式「重试」按钮，避免雪崩。
 
 ### 7.2 WebSocket 客户端 `src/services/ws.ts`
@@ -539,7 +543,7 @@ type Snapshot = {
 | `/devices` | 10 秒 | 左栏列表（含 `open_alarm_count`） |
 | `/alarms` | 10 秒 | 告警页与顶部告警计数；WS 快照里只有计数没有明细 |
 | `/orders` | 30 秒 | 订单表与合格率折线 |
-| `/stats/production` | 30 秒 | 生产 KPI（逐产线 4 次） |
+| `/stats/production` | 30 秒 | 生产 KPI（逐产线 4 次并行请求，显式传 24h 窗口，见 5.4） |
 | `/maintenance` | 60 秒 | 维护记录 |
 | `/anomalies` | 60 秒 | 真值（模拟器每 20 分钟才产生一条，1 分钟足够） |
 | `/devices/{id}/telemetry` | 切范围时拉一次 + 60 秒 | 曲线不需要秒级 |
@@ -599,6 +603,7 @@ export const telemetryStore = {
 | code | HTTP | 前端文案 |
 |---|---|---|
 | `INVALID_PARAM` | 400 | 请求参数不合法：{message} |
+| `VALIDATION_ERROR` | 422 | 参数格式错误：{detail[0].field} {detail[0].message}（多为时间参数未编码） |
 | `DEVICE_NOT_FOUND` | 404 | 设备不存在，请检查设备编号 |
 | `ALARM_NOT_FOUND` | 404 | 告警不存在或已被处理 |
 | `ORDER_NOT_FOUND` | 404 | 订单不存在 |
