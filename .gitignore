@@ -18,6 +18,16 @@ Thumbs.db
 *.log
 backup/
 
+# Python 测试与类型检查缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 前端构建产物与依赖
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
 # 文档生成流水线的中间产物（含原始 docx 快照）；
 # 仓库里的可读源文件是 docs/方案.md，不跟踪生成物
 output/

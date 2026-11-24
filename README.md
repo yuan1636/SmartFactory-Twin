@@ -136,7 +136,18 @@ Get-Content backup\smartfactory.sql | docker exec -i sftwin-db psql -U sf -d sma
 
 ## 验收
 
-第 2 阶段的 13 项验收命令与预期输出见 `docs/spec_phase2.md` 第 7 节，逐条可复制执行。
+第 2 阶段的 15 项验收命令与预期输出见 `docs/spec_phase2.md` 第 7 节，逐条可复制执行。
+**回归记录见 `docs/acceptance_phase2.md`**（每条都带"结论 / 命令 / 实际输出"三列，2026-11-24 实测：
+13 通过、1 不通过（7.10 判定区间，属文档口径）、1 未验证（7.15 真 Ctrl+C 无法程序化投递））。
+
+自动化回归（8 个用例，约 27 秒）：
+
+```powershell
+pip install -r requirements-dev.txt
+python -m pytest tests -v
+```
+
+预期：`8 passed`。
 本机实测结果（2026-11-24）：**13 项中有 12 项与文档预期完全一致，7.10 的数字需要按下面的口径理解。**
 
 **7.10 数据量口径说明**：`--backfill-days 1` 回填的是 `[now-24h, now)` 整段 2 秒栅格，

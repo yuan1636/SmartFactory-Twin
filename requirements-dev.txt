@@ -1,0 +1,10 @@
+# 第 2 阶段最小测试网的开发依赖。
+#
+# 故意与 requirements.txt 分开（按第 3 步要求，不污染运行依赖）：
+#   - 生产/运行只需要 requirements.txt
+#   - 跑测试才装这份：pip install -r requirements-dev.txt
+#
+# 版本与 2026-11-24 实测环境一致（Python 3.13.14 下验证）。
+-r requirements.txt
+pytest==9.2.0
+httpx==0.28.1

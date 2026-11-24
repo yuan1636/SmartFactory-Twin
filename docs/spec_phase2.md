@@ -1,6 +1,6 @@
 ---
 title: 第 2 阶段实现规格（Python 模拟器 + FastAPI + PostgreSQL）
-version: v1.0（已冻结）
+version: v1.1（已冻结，2026-11-24 修订 7.10 判定区间与 7.14 执行前置）
 date: 2026-11-24
 status: 生效
 读者: 代码 agent / 本项目开发者
@@ -285,7 +285,18 @@ status: 生效
 4. **G-10 修订**：告警解除前必须先确认该设备没有其它未解除告警，全部解除才置回 `RUNNING`。
 5. **第 6 节补模拟器运行形态**：`--devices` / `--rate` / `--duration` / `--backfill-days`，默认常驻，`Ctrl+C` 优雅退出并打印写入统计。
 
-冻结后，第 2～8 节的全部字段、接口、阈值以此为准。任何新增或变更只能以 v1.1 版本升级的方式提出，不得静默修改。
+冻结后，第 2～8 节的全部字段、接口、阈值以此为准。任何新增或变更只能以版本升级的方式提出，不得静默修改。
+
+---
+
+## 修订记录（v1.1，2026-11-24）
+
+来源：`docs/acceptance_phase2.md` 的实测回归。v1.0 中两处验收条文与代码实际行为不一致，**代码无缺陷，是条文本身有误**，故只改条文，不动任何设计决策与实现。
+
+1. **7.10 判定区间修正（算术错误）**：v1.0 写成「604,800 + 210 + 28~42 ≈ 605,045，区间 604900~605200」，把 7.8 已写入的 210 行重复计了一次。实际那 210 行的时间戳落在本次回填的 24 小时区间内，被 `ON CONFLICT (device_id, ts)` 去重，不计入总数。正确关系为 **回填新增 604,590 + 重复 210 = 604,800**（整段栅格），再加本步实时 28~42 行，总数约 **604,828**。判定区间改为 `604800 ≤ 结果 ≤ 604900`。
+2. **7.14 补执行前置**：实测发现按 v1.0 的顺序执行（7.12 注入 → 7.13 WebSocket → 7.14 解除），温度告警会在 7.14 之前被收敛任务自动解除，分支一取不到 `open_alarm_count = 1`。原因是 7.12 的第二条数据 `temperature=65.0` 低于预警阈值 70，95℃ 采样点滑出「最近 60 秒」窗口后，窗口峰值只剩 65℃。故补「必须在 7.12 注入后 45 秒内执行」的前置条件，并给出超时后的补救动作。
+
+除上述两条外，v1.0 的其余条文全部保持不变，继续有效。
 
 ---
 
@@ -1277,7 +1288,9 @@ python -m data_pipeline.simulator --backfill-days 1 --duration 5
 ```powershell
 docker exec sftwin-db psql -U sf -d smartfactory -t -c "SELECT count(*) FROM device_telemetry;" | ForEach-Object { $_.Trim() }
 ```
-预期：`604,800`（回填）+ `210`（7.8 已写入）+ `28~42`（本步 5 秒实时）= **约 605,045**，判定区间 `604900 ≤ 结果 ≤ 605200`。
+预期：`604,800` 是本次回填覆盖的**整段栅格**，其中 7.8 已写入的 210 行落在该区间内、被 `ON CONFLICT (device_id, ts)` 去重，所以统计块应打印 `回填行数 : 604590` + `重复行数 : 210`，两者相加正好 604,800。再加本步 5 秒实时写入的 `28~42` 行，总数约 **604,828**，判定区间 `604800 ≤ 结果 ≤ 604900`。
+
+（v1.1 修正：v1.0 曾把 210 行与 604,800 重复相加写成约 605,045，属算术错误，见「修订记录 v1.1」第 1 条。）
 
 ```powershell
 docker exec sftwin-db psql -U sf -d smartfactory -t -c "SELECT min(ts) FROM device_telemetry;" | ForEach-Object { $_.Trim() }
@@ -1337,6 +1350,8 @@ python -m websockets ws://localhost:8000/api/v1/ws/telemetry
 
 ### 7.14 告警解除的 G-10 逻辑（两个分支都要过）
 
+**执行前置（v1.1 补充，必须遵守）**：本节必须在 7.12 注入后 **45 秒内**跑完。原因：收敛任务 5 秒一次，当 95℃ 的采样点滑出「最近 60 秒」窗口（注入后约 60 秒），窗口峰值只剩 65℃，低于预警阈值 70℃，温度告警会被**自动解除**，分支一就取不到 `open_alarm_count = 1`。实测中该告警在注入后 61 秒被自动解除（`detected 04:55:45 → resolved 04:56:46`）。若已超时，重跑 7.12 的「清空告警 + 注入两条」后再执行本节，**不要在超时状态下判本项失败**。
+
 ```powershell
 $id1 = (Invoke-RestMethod "http://localhost:8000/api/v1/alarms?device_id=CNC-01&resolved=false&alarm_type=TEMPERATURE").items[0].alarm_id
 Invoke-RestMethod -Method Patch "http://localhost:8000/api/v1/alarms/$id1/resolve" | ConvertTo-Json
@@ -1365,7 +1380,7 @@ Invoke-RestMethod -Method Patch "http://localhost:8000/api/v1/alarms/$id2/resolv
 | 7.7 | 参数校验 | `INVALID_PARAM` 与 `DEVICE_NOT_FOUND` 都出现 |
 | 7.8 | 模拟器实时 | 写入 210 行且与库内计数一致 |
 | 7.9 | 时序查询 | 点在正常区间，`count ≤ 1800` |
-| 7.10 | 回填 | 约 605,045 行（区间 604900～605200），最早时间早于 23 小时前 |
+| 7.10 | 回填 | 约 604,828 行（区间 604800～604900），`回填+重复 = 604800`，最早时间早于 23 小时前 |
 | 7.11 | 异常真值 | 三类型各 ≥ 20 |
 | 7.12 | 告警链路 | 2 条 CRITICAL 未解除告警，`devices.status = ALARM` |
 | 7.13 | WebSocket | 每秒一条 snapshot，14 台设备，CNC-01 状态 ALARM |

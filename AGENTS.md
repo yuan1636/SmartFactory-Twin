@@ -27,7 +27,10 @@
 |---|---|---|
 | `AGENTS.md` | 本项目协作规则（本文件） | 生效 |
 | `docs/方案.md` | 项目总体方案（实验方案 V1.0）：定位、架构、数据模型、12～16 周路线、验收标准、风险边界 | 已定稿 |
-| `docs/spec_phase2.md` | 第 2 阶段实现规格（模拟器 + FastAPI + PostgreSQL） | **v1.0 已冻结、生效**，第 1～8 节齐全，是第 2 阶段的唯一施工依据；代码已按此实现并跑通第 7 节验收 |
+| `docs/spec_phase2.md` | 第 2 阶段实现规格（模拟器 + FastAPI + PostgreSQL） | **v1.1 已冻结、生效**（2026-11-24 修订 7.10 判定区间与 7.14 执行前置），第 1～8 节齐全，是第 2 阶段的唯一施工依据；代码已按此实现并跑通验收 |
+| `docs/acceptance_phase2.md` | 第 2 阶段验收回归记录（7.1～7.16 逐条结论 + 命令 + 实际输出） | 已完成：14 通过 / 0 不通过 / 1 未验证（7.15 真 Ctrl+C 待人工按一次） |
+| `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v0.9 草案**，待作者确认 3 项（第 13 节 C-1～C-3）后冻结为 v1.0；未冻结前不得据此写代码 |
+| `tests/` | 最小测试网（pytest + httpx，8 个用例） | 8 passed；依赖在 `requirements-dev.txt`，不进 `requirements.txt` |
 | `docs/spec_phase3.md` | 第 3 阶段规格（前端 + Three.js） | 未开始 |
 
 **读文档顺序**：本文件 → `docs/方案.md` → 当前阶段的 `docs/spec_phaseX.md`。规格未定的部分不许自行发挥，先回来问。
@@ -58,10 +61,10 @@
 ## 6. 当前状态
 
 - 第 1 阶段（业务底座与文档）：已完成（需求文档、架构图、数据库设计、设备清单）。
-- **第 2 阶段（Python 模拟器 + FastAPI + PostgreSQL）：代码已实现，第 7 节验收跑通。**
+- **第 2 阶段（Python 模拟器 + FastAPI + PostgreSQL）：已完成并按第 7 节验收（14 通过 / 1 未验证）。**
   交付物：`app/`（18 节接口 + 告警扫描/收敛 + WebSocket）、`data_pipeline/`（模拟器 4 参数 + 三类注入 + 订单推进 + 回填）、
-  `database/`（schema / seed / reset）、`config/devices.json`。遗留一项文档算术问题见下。
-- 下一阶段：第 3 阶段（前端 + Three.js），施工依据 `docs/spec_phase3.md`（尚未编写）。
-- 已裁定并写入 `docs/spec_phase2.md`（v1.0 冻结）的决策：采样 2 秒、新增 `workshops` / `production_lines` / `anomaly_injection` 三张表、第 2 阶段不启用 TimescaleDB、不做认证、告警 5 分钟冷却与 G-10 解除规则、`--backfill-days` 冷启动参数。实现与规格冲突时以规格为准。
-- **已知文档问题（待作者裁定是否升 v1.1）**：规格 7.10 的预期总数「604,800 + 210 + 28~42 ≈ 605,045」把 7.8 已写入的 210 行重复计了一次——
-  这 210 行落在回填区间内，会被 `ON CONFLICT` 去重。实测总数 = 604,800 + 实时行数 = 604,828。代码行为正确，是文档算术需要修正。
+  `database/`（schema / seed / reset）、`config/devices.json`、`tests/`（8 用例）。
+- 当前阶段：**第 3 阶段（React + Three.js + ECharts 前端）**，施工依据 `docs/spec_phase3.md`（v0.9 草案，待确认 C-1～C-3 后冻结）。
+- 已裁定并写入 `docs/spec_phase2.md`（v1.1 冻结）的决策：采样 2 秒、新增 `workshops` / `production_lines` / `anomaly_injection` 三张表、第 2 阶段不启用 TimescaleDB、不做认证、告警 5 分钟冷却与 G-10 解除规则、`--backfill-days` 冷启动参数。实现与规格冲突时以规格为准。
+- **7.10 与 7.14 的口径问题已在 v1.1 修正**（7.10 判定区间改为 `604800 ≤ 总数 ≤ 604900`；7.14 补「7.12 注入后 45 秒内执行」前置）。代码零改动。
+- **唯一未验证项 7.15**：Windows 下无法程序化投递真 Ctrl+C，需作者手工按一次后回填结论。
