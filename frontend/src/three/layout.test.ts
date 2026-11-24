@@ -3,6 +3,7 @@ import {
   DEVICE_LAYOUT,
   DEVICE_SIZES,
   FACTORY,
+  LINE_DEVICES,
   LINE_STRIPS,
   WORKSHOPS,
   missingPlacements,
@@ -81,5 +82,65 @@ describe('G-01 坐标表', () => {
 
   it('坐标表缺设备时能被检测出来（不允许静默跳过）', () => {
     expect(missingPlacements(['CNC-99'])).toEqual(['CNC-99']);
+  });
+});
+
+/** 与 motion.ts 的 gateOf 同一套算法：设备入口（上游侧）+ 停料余量 */
+const STOP_GAP = 0.8;
+const widthOf = (deviceId: string): number => {
+  const type = deviceId.startsWith('CNC')
+    ? 'CNC'
+    : deviceId.startsWith('ROB')
+      ? 'ROBOT'
+      : deviceId.startsWith('CONV')
+        ? 'CONVEYOR'
+        : deviceId.startsWith('INSP')
+          ? 'INSPECTION'
+          : 'AUX';
+  return DEVICE_SIZES[sizeKeyOf(type, deviceId)].x;
+};
+
+describe('产线 → 设备映射（物料流方向）', () => {
+  it('四条产线齐全，且设备按 x 递增排列（流向 +X）', () => {
+    expect(Object.keys(LINE_DEVICES).sort()).toEqual(['LINE-A1', 'LINE-A2', 'LINE-B1', 'LINE-B2']);
+    for (const [lineId, ids] of Object.entries(LINE_DEVICES)) {
+      const xs = ids.map((id) => DEVICE_LAYOUT[id].x);
+      expect(xs, lineId).toEqual([...xs].sort((a, b) => a - b));
+    }
+  });
+
+  it('除动力站两台外，每台设备恰好属于一条产线（不重不漏）', () => {
+    const assigned = Object.values(LINE_DEVICES).flat();
+    const expected = EXPECTED.filter((id) => id !== 'AIR-01' && id !== 'PUMP-01');
+    expect([...assigned].sort()).toEqual([...expected].sort());
+    expect(new Set(assigned).size).toBe(assigned.length);
+  });
+
+  it('每台设备的闸门都落在本产线色带内（否则物料会在带外排队）', () => {
+    for (const strip of LINE_STRIPS) {
+      for (const deviceId of LINE_DEVICES[strip.line_id]) {
+        const gate = DEVICE_LAYOUT[deviceId].x - widthOf(deviceId) / 2 - STOP_GAP;
+        expect(gate, `${strip.line_id}/${deviceId}`).toBeGreaterThanOrEqual(strip.x1 - 0.001);
+        expect(gate, `${strip.line_id}/${deviceId}`).toBeLessThanOrEqual(strip.x2);
+      }
+    }
+  });
+
+  it('设备机身整体落在本产线色带内（物料全程有带走）', () => {
+    for (const strip of LINE_STRIPS) {
+      for (const deviceId of LINE_DEVICES[strip.line_id]) {
+        const { x } = DEVICE_LAYOUT[deviceId];
+        const half = widthOf(deviceId) / 2;
+        expect(x - half, `${strip.line_id}/${deviceId}`).toBeGreaterThanOrEqual(strip.x1);
+        expect(x + half, `${strip.line_id}/${deviceId}`).toBeLessThanOrEqual(strip.x2);
+      }
+    }
+  });
+
+  it('色带长度能放下整数个物料位（料距 3m）', () => {
+    for (const strip of LINE_STRIPS) {
+      const length = Math.abs(strip.x2 - strip.x1);
+      expect(Math.floor(length / 3)).toBeGreaterThanOrEqual(8);
+    }
   });
 });

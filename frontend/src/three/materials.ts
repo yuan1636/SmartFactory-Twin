@@ -23,6 +23,10 @@ export interface SceneMaterials {
   strip: THREE.MeshBasicMaterial;
   corridor: THREE.MeshBasicMaterial;
   pave: THREE.MeshBasicMaterial;
+  /** 产线运行动画（第 6.7 节）：带面纹路、物料、滚筒上的定位条 */
+  cleat: THREE.MeshBasicMaterial;
+  workpiece: THREE.MeshStandardMaterial;
+  rollerMark: THREE.MeshBasicMaterial;
 }
 
 /** 机身基色（G-04：不随状态染色） */
@@ -79,6 +83,10 @@ export function createMaterials(): SceneMaterials {
     strip: new THREE.MeshBasicMaterial({ color: 0x1e3a5f, transparent: true, opacity: 0.9 }),
     corridor: new THREE.MeshBasicMaterial({ color: 0x16222f }),
     pave: new THREE.MeshBasicMaterial({ color: 0x141e2b }),
+    // 带面纹路比色带亮一档，靠"动"被看见；物料比机身浅，深色地面上才分得出来
+    cleat: new THREE.MeshBasicMaterial({ color: 0x356d9e, transparent: true, opacity: 0.85, toneMapped: false }),
+    workpiece: new THREE.MeshStandardMaterial({ color: 0x9fb2c4, roughness: 0.45, metalness: 0.6 }),
+    rollerMark: new THREE.MeshBasicMaterial({ color: 0x141c26 }),
   };
 }
 
@@ -99,4 +107,7 @@ export function disposeMaterials(materials: SceneMaterials | null): void {
   materials.strip.dispose();
   materials.corridor.dispose();
   materials.pave.dispose();
+  materials.cleat.dispose();
+  materials.workpiece.dispose();
+  materials.rollerMark.dispose();
 }

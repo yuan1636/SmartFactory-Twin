@@ -76,6 +76,23 @@ export const LINE_STRIPS: LineStripSpec[] = [
   { line_id: 'LINE-B2', workshop_id: 'WS-B', x1: 6, x2: 34, z: 7.5 },
 ];
 
+/**
+ * 产线 → 设备，**顺序即物料流方向**（与种子数据 seed.sql 的 line_id 一致）。
+ * 供产线运行动画使用：设备是这条线上的"闸门"，顺序错了物料会逆流。
+ * AIR-01 / PUMP-01 属动力站，不在任何产线上。
+ */
+export const LINE_DEVICES: Record<string, string[]> = {
+  'LINE-A1': ['CNC-01', 'ROB-01', 'CONV-01'],
+  'LINE-A2': ['CNC-02', 'ROB-02', 'CONV-02'],
+  'LINE-B1': ['CNC-03', 'ROB-03', 'INSP-01'],
+  'LINE-B2': ['CNC-04', 'ROB-04', 'INSP-02'],
+};
+
+/** 物料流方向：色带 x1 < x2 一律沿 +X 流动（四条产线都是）。 */
+export function flowDirection(strip: LineStripSpec): 1 | -1 {
+  return strip.x2 >= strip.x1 ? 1 : -1;
+}
+
 /** G-06：六类机身外形包络（用于摆位校验与描边盒，不参与建模细节）。 */
 export const DEVICE_SIZES: Record<string, BoxSize> = {
   CNC: { x: 4.0, y: 2.6, z: 2.6 },

@@ -1,8 +1,8 @@
 ---
 title: 第 3 阶段实现规格（React 前端 + Three.js 三维场景 + ECharts）
-version: v1.0（已冻结）
+version: v1.1（v1.0 基础上增补 §6.7 产线运行动画）
 date: 2026-11-24
-status: 生效 —— 2026-11-24 作者确认 C-1～C-3，本文件为第 3 阶段唯一施工依据
+status: 生效 —— v1.0 于 2026-11-24 作者确认 C-1～C-3 后冻结；同日作者追加要求「三维里的产线必须能动起来」，故增补 §6.7（偏差 D-09、D-10）
 读者: 代码 agent / 本项目开发者
 上游文档: docs/方案.md（实验方案 V1.0）、docs/spec_phase2.md（第 2 阶段规格 v1.1）
 ---
@@ -493,6 +493,50 @@ export function effectiveState(status: string, runningStatus: string): Effective
 - click：`navigate('/devices/' + id)`，同时在 store 里记 `focusedDeviceId`，返回总览时保持选中。
 - 禁止在 hover 里改 `scale`（会破环阴影与拾取盒）。
 
+### 6.7 产线运行动画（v1.1 增补）
+
+作者在 v1.0 交付后提出「工程流水线要能动起来」：输送带在转、物料从上一道工序流到下一道、
+设备挡住时料会堆在它前面。这不是物理仿真，是**视觉动画 + 状态映射**，所以不违反第 12 节第 15 条
+（该条禁止的是物理引擎、碰撞检测、真实运动学）。
+
+**几何（程序化，不引入任何外部资产）**
+
+| 对象 | 形状 | 位置 | 数量 | draw call |
+|---|---|---|---|---|
+| 料箱 | `BoxGeometry(0.9, 0.5, 0.9)` | 色带面 y=0.15 上（中心 0.40） | 每条线 `floor(28/3)=9` 个 | 每线 1 个 InstancedMesh |
+| 带面纹路 | `BoxGeometry(0.09, 0.05, 1.0)` | y=0.175 | 每条线 `floor(28/1.4)+1=21` 个 | 每线 1 个 InstancedMesh |
+| 滚筒定位条 | `BoxGeometry(0.07, 0.07, 1.14)` | 绕滚筒轴心 r=0.13 公转 | 每台输送机 8 个 | 每台 1 个 |
+
+物料与纹路藏在设备机身内部时由不透明机身自然遮挡，不做额外裁剪。新增 10 个 draw call。
+
+**六条规则（每条都可被脚本断言，禁止"看起来在动"）**
+
+| # | 规则 | 判定依据 |
+|---|---|---|
+| 1 | 带面纹路恒速滚动 = 皮带在转 | 纹路坐标随时间前移，越界回头 |
+| 2 | 物料沿流向匀速前进，遇关闭的闸门停在设备入口前 `0.8m`，后面的按 `3.0m` 料距排队 | 队首坐标 == 闸门坐标 |
+| 3 | 闸门关闭判据：设备状态 ∉ {RUNNING, IDLE}（即 ALARM / STOPPED / MAINTENANCE / 无数据） | 与 `deviceStates()` 逐台核对 |
+| 4 | 输送机滚筒只在本机 RUNNING/IDLE 时自转，ω = 带速 / 0.18 | 角度增量 > 0 |
+| 5 | 机器人只在本机 RUNNING/IDLE 时摆动（±0.42 rad，周期约 11s），停机冻结在当前姿态 | 角度增量 == 0 |
+| 6 | WS 断开或 `prefers-reduced-motion` 时整线冻结（dt 归零），但画面照常渲染 | 两次采样完全一致 |
+
+**闸门坐标** = 设备入口（上游侧）+ 0.8m，即 `x - 机身宽/2 - 0.8`。四条产线各 3 个闸门，共 12 个；
+`AIR-01` / `PUMP-01` 属动力站，不在任何产线上（`layout.ts` 的 `LINE_DEVICES` 是唯一数据源）。
+
+**边界行为（写清楚是为了不被当成 bug）**
+
+- 物料走到色带尽头就"下线"，回到起点上游一个料距的等待位；带上有空位才重新进线，
+  堵料时多台料在带外按料距排开（带外不可见，不会飘在车间地面上）。
+- 首台设备就是上料口：它停下时上料停止，产线会逐渐跑空——这是正确表现，不是动画丢了。
+- 物料尺寸 0.9m、料距 3.0m：任意两台料不会重叠（有单测守着）。
+
+**纯计算与渲染分离**：一维队列算法放在 `lineTraffic.ts`（不 import three，可单测），
+`motion.ts` 只负责把结果写进 InstancedMesh 矩阵。11 个单测覆盖排队、回炉、不穿透、不倒退、不重叠。
+
+**调试面（仅 dev）**：`window.__sceneDebug.lineMotion()` 返回每条线的 `running / blockedBy / items /
+visibleItems / cleat / gates`；`window.__sceneDebug.deviceStates()` 返回实时状态表。
+验收脚本用这两个钩子推导期望值，不写死"哪条线该堵"。
+
 ---
 
 ## 7. 数据接入层
@@ -757,6 +801,7 @@ window.__sceneDebug?.renderInfo().calls
 13. 后端任何改动（含"顺手加个字段"）——需改后端时先提规格变更；
 14. Playwright/Cypress E2E（L-04 已推迟）；
 15. 三维物理仿真、碰撞检测、真实运动学（机器人臂只做静态姿态 + 轻微摆动）。
+    —— 注意：**视觉动画不算物理仿真**，物料流动与滚筒转动见 §6.7，属于允许范围。
 
 **偏差记录**：
 
@@ -769,6 +814,8 @@ window.__sceneDebug?.renderInfo().calls
 | D-05 | dev 环境三维视口右下角角标同时显示 `fps · draw call` | 规格第 9 节要求把 `renderer.info.render.calls` 打到控制台；无头浏览器读不到控制台，写成可见角标后 10.1.6 才能被脚本验收，且不影响生产构建（`import.meta.env.DEV` 分支） |
 | D-06 | 时间窗统一走 `isoWindow(hours)`，不再用 `isoAgo(h)+isoNow()` 拼窗口 | 两次取时间会跨几毫秒，24 小时变成 86400.002 秒，后端按「> 86400」判 `RANGE_TOO_LARGE` 直接 400。表现是「24 小时窗口时好时坏、1 小时永远正常」，属隐蔽 bug（Batch 2 验收时暴露） |
 | D-07 | `src/services/types.ts` 的 4 个 DTO 按实机响应重写（`alarm_id`/`detected_at`、`record_id`/`finished_at`、`ended_at`、`product_id`/`qualified_rate`） | Batch 1 只写占位页，DTO 是照规格臆测的字段名，与后端真实响应不符；Batch 2 接真实数据前必须先对齐，否则页面全显示 `—` |
+| D-09 | v1.1 增补 §6.7 产线运行动画（滚筒自转 + 带面纹路 + 物料流动 + 排队堵料 + 机器人摆动） | 作者 v1.0 交付后追加要求「流水线要能动起来」；属规格外新增，故连编号与正文一并补上。原第 12 节第 15 条只禁止物理仿真/碰撞检测，视觉动画不在其内 |
+| D-10 | `window.__sceneDebug` 增加 `lineMotion()` 与 `deviceStates()`（仅 dev） | 6.7 的六条规则若只靠人眼看，等于没有验收；暴露运行时快照后，队列位置、闸门开合、冻结行为都能被 `scripts/acceptance-motion.mjs` 逐条断言 |
 | D-08 | `window.__sceneDebug` 增加只读 `camera()`（仅 dev） | 10.2-7「预设切换有缓动、镜头不钻地」与 10.2-6「hover/点击」原本只能人工判断。暴露只读位姿后，由 `scripts/acceptance-batch2.mjs` 断言，生产构建会被 `import.meta.env.DEV` 分支清掉 |
 
 ---

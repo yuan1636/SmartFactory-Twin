@@ -10,10 +10,12 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { readStore, subscribeStore } from '../hooks/useTelemetry';
+import type { EffectiveState } from '../utils/status';
 import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, type DeviceVisual } from './builders';
 import { CAMERA_PRESETS, ORBIT_LIMITS, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
 import { createLabelRenderer } from './labels';
 import { DEVICE_LAYOUT } from './layout';
+import { createMotion, type MotionSnapshot } from './motion';
 
 export interface SceneStats {
   calls: number;
@@ -39,6 +41,10 @@ declare global {
       renderInfo: () => SceneStats;
       /** 只读相机位姿：验收脚本用它确认预设切换有缓动、且镜头不会钻到地面以下 */
       camera: () => { position: [number, number, number]; target: [number, number, number] };
+      /** 产线运行动画快照：验收脚本用它确认物料在动、堵料时停在设备前、降级时冻结 */
+      lineMotion: () => MotionSnapshot;
+      /** 实时设备状态表（WS 未连上时全为 null）：验收脚本据此推导哪条产线该被挡住 */
+      deviceStates: () => Record<string, EffectiveState | null>;
     };
   }
 }
@@ -120,6 +126,14 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 
     const build = buildFactory();
     scene.add(build.root);
+
+    // 产线运行动画（规格 6.7）。每帧只读一次 store，14 台设备共用同一个快照
+    const motion = createMotion(build);
+    let frameState = readStore();
+    const stateOf = (deviceId: string): EffectiveState | null => {
+      if (frameState.wsStatus !== 'connected') return null;
+      return frameState.byId[deviceId]?.state ?? null;
+    };
 
     // 坐标表与后端设备清单不一致时大声报出来，不静默跳过（3.3）
     const snapshot = readStore();
@@ -237,6 +251,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // ---------- 主循环 ----------
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const clock = new THREE.Clock();
+    let prevT = 0;
     let raf = 0;
     let frames = 0;
     let fps = 0;
@@ -266,6 +281,13 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const t = clock.getElapsedTime();
+      frameState = readStore();
+      // 两种情况让动画停住，但画面照常渲染：
+      //  1) 动效降级（prefers-reduced-motion）；
+      //  2) WS 断开——没有数据就不许假装还在生产（规格 6.7 第 6 条）
+      const frozen = reduceMotion || frameState.wsStatus !== 'connected';
+      const dt = frozen ? 0 : Math.max(0, t - prevT);
+      prevT = t;
 
       if (tween.active) {
         const progress = Math.min(1, (performance.now() - tween.start) / TWEEN_MS);
@@ -275,6 +297,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         if (progress >= 1) tween.active = false;
       }
 
+      motion.update(dt, stateOf);
       animateMaterial(t);
       controls.update();
       renderer.render(scene, camera);
@@ -291,6 +314,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     };
 
     // 先同步渲染一帧：无头浏览器 / 后台标签页里 rAF 可能被节流，画布与 draw call 仍要能读出来
+    motion.update(0, stateOf);
     controls.update();
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
@@ -321,6 +345,15 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
           position: camera.position.toArray() as [number, number, number],
           target: controls.target.toArray() as [number, number, number],
         }),
+        lineMotion: () => motion.snapshot(),
+        deviceStates: () => {
+          const current = readStore();
+          const map: Record<string, EffectiveState | null> = {};
+          for (const device of current.devices) {
+            map[device.device_id] = current.wsStatus === 'connected' ? device.state : null;
+          }
+          return map;
+        },
       };
     }
 
@@ -332,6 +365,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
+      motion.dispose();
       build.dispose();
       scene.clear();
       renderer.dispose();

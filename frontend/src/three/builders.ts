@@ -29,10 +29,26 @@ export interface DeviceVisual {
   state: EffectiveState | null;
 }
 
+/** 输送机滚筒：本体 + 随轴转的定位条，交给运行动画每帧更新实例矩阵。 */
+export interface RollerRig {
+  rollers: THREE.InstancedMesh;
+  marks: THREE.InstancedMesh;
+  /** 8 个滚筒的局部 x 坐标 */
+  xs: number[];
+  /** 滚筒中心高度（组内局部坐标） */
+  y: number;
+  /** 定位条到轴心的距离 */
+  radius: number;
+}
+
 export interface FactoryBuild {
   root: THREE.Group;
   devices: Map<string, DeviceVisual>;
   materials: SceneMaterials;
+  /** 输送机滚筒（按 device_id） */
+  rollers: Map<string, RollerRig>;
+  /** 机器人摆动枢轴（按 device_id） */
+  arms: Map<string, THREE.Group>;
   dispose: () => void;
 }
 
@@ -52,6 +68,8 @@ export function buildFactory(): FactoryBuild {
   root.name = 'factory';
   const geometries: THREE.BufferGeometry[] = [];
   const devices = new Map<string, DeviceVisual>();
+  const rollers = new Map<string, RollerRig>();
+  const arms = new Map<string, THREE.Group>();
 
   const track = <T extends THREE.BufferGeometry>(geo: T): T => {
     geometries.push(geo);
@@ -170,14 +188,21 @@ export function buildFactory(): FactoryBuild {
     group.name = `device:${deviceId}`;
     group.userData.deviceId = deviceId;
 
-    const add = (geo: THREE.BufferGeometry, x: number, y: number, z: number, rotZ = 0) => {
+    const add = (
+      geo: THREE.BufferGeometry,
+      x: number,
+      y: number,
+      z: number,
+      rotZ = 0,
+      parent: THREE.Group = group,
+    ) => {
       const mesh = new THREE.Mesh(track(geo), mat);
       mesh.position.set(x, y, z);
       mesh.rotation.z = rotZ;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.userData.deviceId = deviceId;
-      group.add(mesh);
+      parent.add(mesh);
       return mesh;
     };
 
@@ -191,24 +216,45 @@ export function buildFactory(): FactoryBuild {
     } else if (type === 'ROBOT') {
       add(new THREE.CylinderGeometry(0.6, 0.6, 0.35, 24), 0, 0.175, 0);
       add(new THREE.BoxGeometry(0.34, 1.6, 0.34), 0, 1.15, 0);
-      add(new THREE.BoxGeometry(1.4, 0.3, 0.3), 0.7, 1.95, 0);
-      add(new THREE.BoxGeometry(0.32, 0.36, 0.32), 1.4, 1.72, 0);
+      // 大臂与夹爪套在枢轴组里：转组的 y 轴就是"机器人摆动"，几何一点不用改
+      const pivot = new THREE.Group();
+      pivot.name = `arm:${deviceId}`;
+      pivot.position.set(0, 1.95, 0);
+      group.add(pivot);
+      add(new THREE.BoxGeometry(1.4, 0.3, 0.3), 0.7, 0, 0, 0, pivot);
+      add(new THREE.BoxGeometry(0.32, 0.36, 0.32), 1.4, -0.23, 0, 0, pivot);
+      arms.set(deviceId, pivot);
       lampY = 2.35;
     } else if (type === 'CONVEYOR') {
       add(new THREE.BoxGeometry(10.0, 0.7, 1.2), 0, 0.35, 0);
       // 8 个滚筒用 InstancedMesh：既符合"8 个滚筒"，又只占 1 个 draw call
       const rollerGeo = track(new THREE.CylinderGeometry(0.18, 0.18, 1.2, 14));
       rollerGeo.rotateX(Math.PI / 2);
-      const rollers = new THREE.InstancedMesh(rollerGeo, mat, 8);
+      const rollerMesh = new THREE.InstancedMesh(rollerGeo, mat, 8);
       const dummy = new THREE.Object3D();
+      const xs: number[] = [];
       for (let i = 0; i < 8; i += 1) {
-        dummy.position.set(-4 + i * (8 / 7), 0.82, 0);
+        xs.push(-4 + i * (8 / 7));
+        dummy.position.set(xs[i], 0.82, 0);
         dummy.updateMatrix();
-        rollers.setMatrixAt(i, dummy.matrix);
+        rollerMesh.setMatrixAt(i, dummy.matrix);
       }
-      rollers.castShadow = true;
-      rollers.userData.deviceId = deviceId;
-      group.add(rollers);
+      rollerMesh.castShadow = true;
+      rollerMesh.userData.deviceId = deviceId;
+      group.add(rollerMesh);
+
+      // 光滑圆柱自转是看不出来的，配一条绕轴转的暗色定位条才有"在转"的观感
+      const markGeo = track(new THREE.BoxGeometry(0.07, 0.07, 1.14));
+      const markMesh = new THREE.InstancedMesh(markGeo, materials.rollerMark, 8);
+      for (let i = 0; i < 8; i += 1) {
+        dummy.position.set(xs[i], 0.95, 0);
+        dummy.updateMatrix();
+        markMesh.setMatrixAt(i, dummy.matrix);
+      }
+      markMesh.userData.deviceId = deviceId;
+      group.add(markMesh);
+
+      rollers.set(deviceId, { rollers: rollerMesh, marks: markMesh, xs, y: 0.82, radius: 0.13 });
       lampY = 1.05;
     } else if (type === 'INSPECTION') {
       add(new THREE.BoxGeometry(3.0, 0.8, 2.0), 0, 0.4, 0);
@@ -277,7 +323,7 @@ export function buildFactory(): FactoryBuild {
     disposeMaterials(materials);
   };
 
-  return { root, devices, materials, dispose };
+  return { root, devices, materials, rollers, arms, dispose };
 }
 
 /** 坐标表里没有的设备：堆到动力站旁并在控制台报警，不静默跳过（3.3）。 */

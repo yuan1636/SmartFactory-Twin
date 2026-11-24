@@ -3,7 +3,8 @@
 以虚拟机械加工工厂为场景（1 工厂 / 2 车间 / 4 生产线 / 14 台设备）的数字孪生演示系统。
 **第一版全部数据为模拟数据，不得对外表述为真实工厂数据。**
 
-本仓库当前处于 **第 3 阶段（前端）已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 真值展示），附一键启动脚本。
+本仓库当前处于 **第 3 阶段（前端）已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 真值展示），
+**三维产线会随设备状态真实运行**（物料流动、闸门阻挡排队、滚筒转动、机器人摆动），附一键启动脚本。
 
 ## 当前进度
 
@@ -11,10 +12,10 @@
 |---|---|---|
 | 第 1 阶段 | 业务底座与文档（方案、架构、数据模型、设备清单） | 已完成，见 `docs/方案.md` |
 | 第 2 阶段 | 模拟器 + REST API + WebSocket 推送 + 告警判定 + 生产订单推进 | 已完成，见 `docs/spec_phase2.md`、`docs/acceptance_phase2.md` |
-| **第 3 阶段** | **React + TypeScript + Three.js + ECharts 前端** | **已完成并验收**（5 个可用页 + 1 个禁用导航项；10.1 八条 + 10.2 十二项） |
+| **第 3 阶段** | **React + TypeScript + Three.js + ECharts 前端** | **已完成并验收**（5 个可用页 + 1 个禁用导航项；10.1 八条 + 10.2 十二项；产线运行动画 17 项） |
 | 第 4 阶段 | Kafka 接入、TimescaleDB、AI 异常检测 / 故障预测 / 产量预测 | 未开始 |
 
-第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.0 已冻结**），验收记录见 `docs/acceptance_phase3.md`。
+第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.1 已冻结**，v1.1 在 v1.0 上增补 §6.7 产线运行动画），验收记录见 `docs/acceptance_phase3.md`。
 
 ## 目录结构
 
@@ -28,14 +29,18 @@ database/seed.sql            种子数据（2 车间 / 4 产线 / 14 设备）
 database/reset.sql           清库重建（⚠️ 会清空全部数据）
 database/reset_drop_only.sql 只删除表（配合分步重建）
 frontend/                    第 3 阶段前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5）
-  src/three/layout.ts        14 台设备三维坐标 + 六类机身尺寸（唯一数据源）
-  src/three/builders.ts      程序化几何：厂房 / 产线色带 / 六类设备
-  src/three/SceneRoot.tsx    渲染循环、相机预设、射线拾取、状态材质切换
+  src/three/layout.ts        14 台设备三维坐标 + 六类机身尺寸 + 产线物料流顺序（唯一数据源）
+  src/three/builders.ts      程序化几何：厂房 / 产线色带 / 六类设备 / 滚筒 / 机械臂枢轴
+  src/three/lineTraffic.ts   一维队列推进算法（纯函数，不依赖 three，可单测）
+  src/three/motion.ts        装配产线动画：物料 InstancedMesh 矩阵、滚筒自转、机械臂摆动
+  src/three/SceneRoot.tsx    渲染循环、相机预设、射线拾取、状态材质切换、动画冻结
   src/services/              API 客户端、WS 客户端（退避重连）、模块级 store、格式化
   src/pages/                 总览 / 设备监控 / 生产分析 / 告警与维护 / AI 预测（真值展示）
   src/utils/analytics.ts     告警分级、G-10 解除文案、真值甘特分组、真值 vs 告警对比
 scripts/start-all.ps1        一键启动（数据库 → 后端 → 模拟器 → 前端）
-scripts/acceptance-batch2.mjs 页面级验收脚本（CDP 驱动无头浏览器真点击）
+scripts/lib/cdp.mjs          CDP 公共底座（连浏览器 / check / sleep / summarize）
+scripts/acceptance-batch2.mjs 页面级验收脚本（CDP 驱动无头浏览器真点击，24 项）
+scripts/acceptance-motion.mjs 产线运行动画验收脚本（17 项，读运行时快照与设备状态）
 app/                         FastAPI 后端
   main.py                    应用入口（uvicorn app.main:app）
   config.py                  配置与设备配置加载
@@ -143,19 +148,20 @@ npm run dev
 
 打开 <http://127.0.0.1:5173/overview>（必须是 `127.0.0.1`，用 `localhost` 会因 IPv6 解析白等约 2 秒）。
 
-- 三维总览：14 台设备随模拟器状态变化，状态灯 / 地面光环 / 告警描边可辨；
+- 三维总览：14 台设备随模拟器状态变化，状态灯 / 地面光环 / 告警描边可辨；产线物料持续流动，
+  设备停机时物料堵在它上游排队，WebSocket 断开时整场动画冻结；
 - 设备监控：`/devices/CNC-01`，四指标曲线带 WARNING / CRITICAL 参考线，1h / 6h / 24h 切换；
 - REST 走 Vite 的 `/api` 代理（后端没有 CORS 中间件，浏览器直连 8000 会被拦），
   WebSocket 直连 `ws://127.0.0.1:8000`。原因见 `docs/spec_phase3.md` 偏差 D-04。
 
-前端单测（39 个用例）：
+前端单测（77 个用例，含产线流动算法 11 个）：
 
 ```powershell
 cd frontend
 npm run test
 ```
 
-预期：`Test Files 7 passed`、`Tests 39 passed`。
+预期：`Test Files 9 passed`、`Tests 77 passed`。
 
 ## ⚠️ 关于 reset.sql
 
@@ -195,7 +201,7 @@ Get-Content backup\smartfactory.sql | docker exec -i sftwin-db psql -U sf -d sma
 ```powershell
 cd frontend
 npm run build      # 预期 ✓ built in ...，0 error
-npm run test       # 预期 8 files / 60 tests passed
+npm run test       # 预期 9 files / 77 tests passed
 npm run dev        # 另开窗口后访问 /overview、/devices 等
 ```
 
@@ -210,6 +216,21 @@ node scripts\acceptance-batch2.mjs
 
 注意：验「解除告警」前必须有未解除告警。没有时先注入一条超温遥测（时间戳带毫秒，
 避免与模拟器的整 2 秒栅格撞主键），命令见 `docs/acceptance_phase3.md` 第 5.1 节。
+
+### 产线运行动画（第 3 阶段补做，2026-11-24）
+
+```powershell
+node scripts\acceptance-motion.mjs
+```
+
+17 项断言，分五组：闸门位置与初始状态、物料确实在动且方向正确、停机设备上游确实堵住且不穿模、
+滚筒角速度与机械臂摆动幅度、`prefers-reduced-motion` 下完全静止。
+
+期望值不写死：脚本先读 `__sceneDebug.deviceStates()`，实时判断哪条线该堵、哪台设备是闸门，
+再断言该闸门上游确实堆积、下游确实通畅。后端停机时另做一次冻结复验（`paused=true`、两次采样完全一致）。
+
+> 该脚本依赖 dev 构建下的 `window.__sceneDebug`（`import.meta.env.DEV` 分支）。
+> `npm run build` 的产物里没有这个对象，所以只能在 `npm run dev` 下跑。
 
 ### 第 2 阶段
 
@@ -249,6 +270,19 @@ python -m pytest tests -v
 | 告警解除 | 先 `ALARM`(open=1) → 再 `RUNNING`(open=0) |
 | WebSocket | 每秒 1 条 snapshot，14 台设备，约 2.5 KB |
 | 优雅退出 | 打印统计块，退出码 0，无 Traceback |
+
+第 3 阶段前端与产线动画实测（同一台机器，2026-11-24）：
+
+| 项 | 实测值 |
+|---|---|
+| `npm run build` | `✓ built in 6.19s`，0 error（仅 chunk > 500 kB 的体积提示） |
+| `npm run test` | 9 files / **77 tests passed** |
+| `acceptance-batch2.mjs` | **24 / 24 通过** |
+| `acceptance-motion.mjs` | **17 / 17 通过** |
+| 渲染开销 | 132 draw calls / 11,066 triangles（预算 150，新增 10 个来自物料与滚筒） |
+| 产线闸门 | 4 条产线 × 3 台设备，闸门坐标全部落在色带内，带宽可容 8 个料位 |
+| 停机实测 | WS 断开后 `paused=true`，两次采样物料位置完全一致，恢复后自动续跑 |
+| 后端回归 | `pytest` 8 passed |
 
 ## 第 2 阶段明确不做
 
