@@ -1,0 +1,9 @@
+# 第 4 阶段（AI 模型）依赖，版本按 docs/spec_phase4.md 4.1 锁定
+# 与 requirements.txt 分开：ml 依赖体积大（xgboost 约 200 MB），
+# 只跑后端/前端/验收不需要装它，避免把第 2、3 阶段的验收环境拖重。
+# 安装：pip install -r requirements-ml.txt
+scikit-learn==1.5.2
+xgboost==2.1.3
+joblib==1.4.2
+pyarrow==18.1.0
+kafka-python==2.0.2

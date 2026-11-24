@@ -1,0 +1,427 @@
+{
+  "generated_at": "2026-11-24T21:43:45",
+  "model_id": "anomaly-20261124-2143-9ab70b7",
+  "schema_hash": "15afd2a011823561",
+  "dataset": {
+    "rows": 848112,
+    "positive_rows": 14266,
+    "positive_rate": 0.016821,
+    "sample_seconds": 10,
+    "time_range": [
+      "2026-11-17 13:25:06",
+      "2026-11-24 13:41:52"
+    ],
+    "split": [
+      {
+        "split": "train",
+        "rows": 593698,
+        "positive": 10048,
+        "positive_rate": 0.01692,
+        "start": "2026-11-17 13:25:06",
+        "end": "2026-11-22 11:12:46"
+      },
+      {
+        "split": "val",
+        "rows": 127208,
+        "positive": 2043,
+        "positive_rate": 0.01606,
+        "start": "2026-11-22 11:12:56",
+        "end": "2026-11-23 12:27:16"
+      },
+      {
+        "split": "test",
+        "rows": 127206,
+        "positive": 2175,
+        "positive_rate": 0.0171,
+        "start": "2026-11-23 12:27:26",
+        "end": "2026-11-24 13:42:16"
+      }
+    ]
+  },
+  "false_alarm_budget_per_device_hour": 1.0,
+  "thresholds": {
+    "threshold_rule": {
+      "threshold": 0.5,
+      "note": "0.5 等价于越过 warning"
+    },
+    "logistic_regression": {
+      "threshold": 0.821424,
+      "val_recall": 0.9829,
+      "val_precision": 0.8924,
+      "val_false_alarms": 242,
+      "budget_per_device_hour": 1.0,
+      "budget_total": 353
+    },
+    "isolation_forest": {
+      "threshold": 0.943311,
+      "val_recall": 0.0127,
+      "val_precision": 0.0781,
+      "val_false_alarms": 307,
+      "budget_per_device_hour": 1.0,
+      "budget_total": 353
+    },
+    "xgboost": {
+      "threshold": 0.007866,
+      "val_recall": 0.998,
+      "val_precision": 0.9062,
+      "val_false_alarms": 211,
+      "budget_per_device_hour": 1.0,
+      "budget_total": 353,
+      "best_iteration": 282,
+      "scale_pos_weight": 58.09
+    }
+  },
+  "models": {
+    "threshold_rule": {
+      "name": "阈值规则（现有后端逻辑）",
+      "threshold_info": {
+        "threshold": 0.5,
+        "note": "0.5 等价于越过 warning"
+      },
+      "val": {
+        "threshold": 0.5,
+        "pr_auc": 0.9408,
+        "roc_auc": 0.9768,
+        "precision": 0.9941,
+        "recall": 0.8223,
+        "f1": 0.9001,
+        "confusion": {
+          "tn": 125155,
+          "fp": 10,
+          "fn": 363,
+          "tp": 1680
+        }
+      },
+      "test": {
+        "threshold": 0.5,
+        "pr_auc": 0.9098,
+        "roc_auc": 0.9623,
+        "precision": 0.9909,
+        "recall": 0.8028,
+        "f1": 0.887,
+        "confusion": {
+          "tn": 125015,
+          "fp": 16,
+          "fn": 429,
+          "tp": 1746
+        },
+        "interval": {
+          "intervals_in_window": 300,
+          "intervals_absorbed_by_later": 174,
+          "intervals_with_rows": 124,
+          "intervals_detected": 109,
+          "detection_rate": 0.879,
+          "median_delay_seconds": 8.0,
+          "by_type": {
+            "CURRENT_ABNORMAL": {
+              "total": 37,
+              "detected": 24,
+              "rate": 0.6486
+            },
+            "TEMP_DRIFT": {
+              "total": 42,
+              "detected": 40,
+              "rate": 0.9524
+            },
+            "VIB_SPIKE": {
+              "total": 45,
+              "detected": 45,
+              "rate": 1.0
+            }
+          }
+        },
+        "false_alarms_per_device_hour": 0.045
+      }
+    },
+    "logistic_regression": {
+      "name": "逻辑回归",
+      "threshold_info": {
+        "threshold": 0.821424,
+        "val_recall": 0.9829,
+        "val_precision": 0.8924,
+        "val_false_alarms": 242,
+        "budget_per_device_hour": 1.0,
+        "budget_total": 353
+      },
+      "val": {
+        "threshold": 0.821424,
+        "pr_auc": 0.9878,
+        "roc_auc": 0.9989,
+        "precision": 0.8924,
+        "recall": 0.9829,
+        "f1": 0.9355,
+        "confusion": {
+          "tn": 124923,
+          "fp": 242,
+          "fn": 35,
+          "tp": 2008
+        }
+      },
+      "test": {
+        "threshold": 0.821424,
+        "pr_auc": 0.9421,
+        "roc_auc": 0.9937,
+        "precision": 0.8484,
+        "recall": 0.9623,
+        "f1": 0.9018,
+        "confusion": {
+          "tn": 124657,
+          "fp": 374,
+          "fn": 82,
+          "tp": 2093
+        },
+        "interval": {
+          "intervals_in_window": 300,
+          "intervals_absorbed_by_later": 174,
+          "intervals_with_rows": 124,
+          "intervals_detected": 121,
+          "detection_rate": 0.9758,
+          "median_delay_seconds": 6.0,
+          "by_type": {
+            "CURRENT_ABNORMAL": {
+              "total": 37,
+              "detected": 34,
+              "rate": 0.9189
+            },
+            "TEMP_DRIFT": {
+              "total": 42,
+              "detected": 42,
+              "rate": 1.0
+            },
+            "VIB_SPIKE": {
+              "total": 45,
+              "detected": 45,
+              "rate": 1.0
+            }
+          }
+        },
+        "false_alarms_per_device_hour": 1.058
+      }
+    },
+    "isolation_forest": {
+      "name": "IsolationForest（无监督）",
+      "threshold_info": {
+        "threshold": 0.943311,
+        "val_recall": 0.0127,
+        "val_precision": 0.0781,
+        "val_false_alarms": 307,
+        "budget_per_device_hour": 1.0,
+        "budget_total": 353
+      },
+      "val": {
+        "threshold": 0.943311,
+        "pr_auc": 0.0715,
+        "roc_auc": 0.8779,
+        "precision": 0.0781,
+        "recall": 0.0127,
+        "f1": 0.0219,
+        "confusion": {
+          "tn": 124858,
+          "fp": 307,
+          "fn": 2017,
+          "tp": 26
+        }
+      },
+      "test": {
+        "threshold": 0.943311,
+        "pr_auc": 0.067,
+        "roc_auc": 0.8572,
+        "precision": 0.1145,
+        "recall": 0.0175,
+        "f1": 0.0303,
+        "confusion": {
+          "tn": 124737,
+          "fp": 294,
+          "fn": 2137,
+          "tp": 38
+        },
+        "interval": {
+          "intervals_in_window": 300,
+          "intervals_absorbed_by_later": 174,
+          "intervals_with_rows": 124,
+          "intervals_detected": 4,
+          "detection_rate": 0.0323,
+          "median_delay_seconds": 65.0,
+          "by_type": {
+            "CURRENT_ABNORMAL": {
+              "total": 37,
+              "detected": 0,
+              "rate": 0.0
+            },
+            "TEMP_DRIFT": {
+              "total": 42,
+              "detected": 4,
+              "rate": 0.0952
+            },
+            "VIB_SPIKE": {
+              "total": 45,
+              "detected": 0,
+              "rate": 0.0
+            }
+          }
+        },
+        "false_alarms_per_device_hour": 0.832
+      }
+    },
+    "xgboost": {
+      "name": "XGBoost（主模型）",
+      "threshold_info": {
+        "threshold": 0.007866,
+        "val_recall": 0.998,
+        "val_precision": 0.9062,
+        "val_false_alarms": 211,
+        "budget_per_device_hour": 1.0,
+        "budget_total": 353,
+        "best_iteration": 282,
+        "scale_pos_weight": 58.09
+      },
+      "val": {
+        "threshold": 0.007866,
+        "pr_auc": 0.9984,
+        "roc_auc": 0.9999,
+        "precision": 0.9062,
+        "recall": 0.998,
+        "f1": 0.9499,
+        "confusion": {
+          "tn": 124954,
+          "fp": 211,
+          "fn": 4,
+          "tp": 2039
+        }
+      },
+      "test": {
+        "threshold": 0.007866,
+        "pr_auc": 0.9859,
+        "roc_auc": 0.9943,
+        "precision": 0.9063,
+        "recall": 0.983,
+        "f1": 0.9431,
+        "confusion": {
+          "tn": 124810,
+          "fp": 221,
+          "fn": 37,
+          "tp": 2138
+        },
+        "interval": {
+          "intervals_in_window": 300,
+          "intervals_absorbed_by_later": 174,
+          "intervals_with_rows": 124,
+          "intervals_detected": 121,
+          "detection_rate": 0.9758,
+          "median_delay_seconds": 4.0,
+          "by_type": {
+            "CURRENT_ABNORMAL": {
+              "total": 37,
+              "detected": 34,
+              "rate": 0.9189
+            },
+            "TEMP_DRIFT": {
+              "total": 42,
+              "detected": 42,
+              "rate": 1.0
+            },
+            "VIB_SPIKE": {
+              "total": 45,
+              "detected": 45,
+              "rate": 1.0
+            }
+          }
+        },
+        "false_alarms_per_device_hour": 0.625
+      }
+    }
+  },
+  "type_attribution": {
+    "f1_macro": 1.0,
+    "precision_macro": 1.0,
+    "recall_macro": 1.0,
+    "f1_weighted": 1.0,
+    "n_samples": 2175,
+    "per_class": {
+      "TEMP_DRIFT": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1682
+      },
+      "CURRENT_ABNORMAL": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 313
+      },
+      "VIB_SPIKE": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 180
+      }
+    }
+  },
+  "top_features": [
+    {
+      "name": "temperature_dev",
+      "importance": 0.39198
+    },
+    {
+      "name": "temperature_thr",
+      "importance": 0.16206
+    },
+    {
+      "name": "vibration_dev",
+      "importance": 0.07715
+    },
+    {
+      "name": "current_dev",
+      "importance": 0.07551
+    },
+    {
+      "name": "vibration_rz",
+      "importance": 0.07163
+    },
+    {
+      "name": "current_rz",
+      "importance": 0.03833
+    },
+    {
+      "name": "temperature_rz",
+      "importance": 0.01955
+    },
+    {
+      "name": "temperature_w60_std",
+      "importance": 0.01728
+    },
+    {
+      "name": "vibration_thr",
+      "importance": 0.01297
+    },
+    {
+      "name": "speed_dev",
+      "importance": 0.01143
+    }
+  ],
+  "random_split_control": {
+    "note": "随机切分，仅作泄漏对照，不作为最终结果",
+    "threshold": 0.001497,
+    "test": {
+      "threshold": 0.001497,
+      "pr_auc": 0.9982,
+      "roc_auc": 0.9998,
+      "precision": 0.4749,
+      "recall": 0.9991,
+      "f1": 0.6438,
+      "confusion": {
+        "tn": 122713,
+        "fp": 2364,
+        "fn": 2,
+        "tp": 2138
+      }
+    }
+  },
+  "notes": {
+    "type_attribution_caveat": "类型归因接近满分是**数据集事实**不是模型能力：config/devices.json 里每台设备只被分配了一种异常类型（实测 14 台设备的注入类型数全为 1），所以「哪类指标在偏离」与「属于哪类异常」在本数据上是确定性映射。真实工厂里同一台设备会先后出现多种异常，届时宏 F1 不会是这个数。因此该指标只能作为「归因链路可用」的证据，不能作为泛化能力的证据。",
+    "unsupervised_baseline": "IsolationForest 显著弱于阈值规则（PR-AUC 0.07 vs 0.91）。原因不是实现错误：注入异常表现为相对阈值的**持续偏移**（TEMP_DRIFT 平均 419 秒），每一行的绝对取值仍落在设备正常区间内，在 78 维空间里不构成离群点；而无监督方法只能找离群点。这条结论支持「本场景必须用有监督 + 领域特征」，也是把无监督基线放进来的意义。",
+    "data_is_simulated": "全部数据来自模拟器注入（docs/方案.md 已声明），指标只对模拟器成立，不代表真实工厂。",
+    "sample_interval": "训练集按 10 秒抽稀；推理侧仍按 2 秒，滑窗特征用 2 秒原分辨率计算。"
+  }
+}

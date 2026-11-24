@@ -32,6 +32,9 @@ frontend/.vite/
 # 仓库里的可读源文件是 docs/方案.md，不跟踪生成物
 output/
 
+# 第 4 阶段模型产物（体积大，可由 ml/ 下的脚本重建）；报告 JSON 在 ml/evaluation/reports 里进 git
+artifacts/
+
 # Agent 工作记忆（本地开发上下文，不属于工程交付物）
 .workbuddy/
 
