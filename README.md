@@ -3,7 +3,7 @@
 以虚拟机械加工工厂为场景（1 工厂 / 2 车间 / 4 生产线 / 14 台设备）的数字孪生演示系统。
 **第一版全部数据为模拟数据，不得对外表述为真实工厂数据。**
 
-本仓库当前处于 **第 3 阶段（前端）Batch 1**：三维工厂总览 + 设备监控页已可运行，生产分析 / 告警与维护 / AI 预测三页在 Batch 2 交付。
+本仓库当前处于 **第 3 阶段（前端）已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 真值展示），附一键启动脚本。
 
 ## 当前进度
 
@@ -11,7 +11,7 @@
 |---|---|---|
 | 第 1 阶段 | 业务底座与文档（方案、架构、数据模型、设备清单） | 已完成，见 `docs/方案.md` |
 | 第 2 阶段 | 模拟器 + REST API + WebSocket 推送 + 告警判定 + 生产订单推进 | 已完成，见 `docs/spec_phase2.md`、`docs/acceptance_phase2.md` |
-| **第 3 阶段** | **React + TypeScript + Three.js + ECharts 前端** | **Batch 1 已完成并验收**（三维总览 + 设备监控），Batch 2 待做 |
+| **第 3 阶段** | **React + TypeScript + Three.js + ECharts 前端** | **已完成并验收**（5 个可用页 + 1 个禁用导航项；10.1 八条 + 10.2 十二项） |
 | 第 4 阶段 | Kafka 接入、TimescaleDB、AI 异常检测 / 故障预测 / 产量预测 | 未开始 |
 
 第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.0 已冻结**），验收记录见 `docs/acceptance_phase3.md`。
@@ -32,7 +32,10 @@ frontend/                    第 3 阶段前端（React 18 + TS 5.6 + Vite 6 + t
   src/three/builders.ts      程序化几何：厂房 / 产线色带 / 六类设备
   src/three/SceneRoot.tsx    渲染循环、相机预设、射线拾取、状态材质切换
   src/services/              API 客户端、WS 客户端（退避重连）、模块级 store、格式化
-  src/pages/                 总览 / 设备监控（Batch 1）；生产 / 告警 / AI（Batch 2 占位）
+  src/pages/                 总览 / 设备监控 / 生产分析 / 告警与维护 / AI 预测（真值展示）
+  src/utils/analytics.ts     告警分级、G-10 解除文案、真值甘特分组、真值 vs 告警对比
+scripts/start-all.ps1        一键启动（数据库 → 后端 → 模拟器 → 前端）
+scripts/acceptance-batch2.mjs 页面级验收脚本（CDP 驱动无头浏览器真点击）
 app/                         FastAPI 后端
   main.py                    应用入口（uvicorn app.main:app）
   config.py                  配置与设备配置加载
@@ -56,6 +59,21 @@ factory_models/              预留，本阶段不实现（第 3 阶段三维资
 ## 快速开始
 
 以下命令在仓库根目录、PowerShell 中执行。
+
+### 0. 一键启动（推荐）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-all.ps1
+```
+
+按顺序做四件事，每步打印 `[1/4] …`，任一步失败会打印退出码并停下：
+
+1. `docker compose up -d` 并等 `pg_isready`（最多 60 秒）
+2. 新窗口起后端 `uvicorn app.main:app --port 8000`，等 `/api/v1/health` 返回 200
+3. 新窗口起模拟器 `python -m data_pipeline.simulator`
+4. 新窗口起前端 `npm run dev`，等 5173 可访问
+
+三个服务窗口请保持打开。8000 已被占用时会跳过后端启动（避免端口冲突），此时沿用已有进程。
 
 ### 1. 启动数据库（PostgreSQL 16，宿主机端口 5433）
 
@@ -166,20 +184,32 @@ Get-Content backup\smartfactory.sql | docker exec -i sftwin-db psql -U sf -d sma
 
 ## 验收
 
-### 第 3 阶段（进行中，Batch 1 部分）
+### 第 3 阶段（已完成）
 
 规格第 10 节的 8 条命令 + 12 项人工检查，逐条记录在 **`docs/acceptance_phase3.md`**
-（三列：结论 / 命令 / 实际输出）。Batch 1 范围内 8 条命令全部通过；
-人工检查第 5～7 项（动效、hover 与点击、镜头预设）需人工在浏览器里看，已在文档中标注「未验证」。
+（三列：结论 / 命令 / 实际输出）。10.1 八条命令全过；10.2 十二项中 9 项已由脚本断言，
+仅「动效是否刺眼」「真实帧率」两项保留为人工判断。
 
 若要自己复跑：
 
 ```powershell
 cd frontend
 npm run build      # 预期 ✓ built in ...，0 error
-npm run test       # 预期 7 files / 39 tests passed
+npm run test       # 预期 8 files / 60 tests passed
 npm run dev        # 另开窗口后访问 /overview、/devices 等
 ```
+
+页面级验收（Chrome 需用 `--remote-debugging-port=9222` 启动，前端在 5173）：
+
+```powershell
+node scripts\acceptance-batch2.mjs
+```
+
+该脚本做 24 项断言：三维 hover 高亮 / 点击跳转 / 相机缓动、告警解除 Toast 的 G-10 文案、
+生产页数字与接口自洽、AI 页无编造指标。
+
+注意：验「解除告警」前必须有未解除告警。没有时先注入一条超温遥测（时间戳带毫秒，
+避免与模拟器的整 2 秒栅格撞主键），命令见 `docs/acceptance_phase3.md` 第 5.1 节。
 
 ### 第 2 阶段
 

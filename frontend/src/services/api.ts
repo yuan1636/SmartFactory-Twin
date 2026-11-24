@@ -103,3 +103,17 @@ export function isoAgo(hours: number): string {
 export function isoNow(): string {
   return new Date().toISOString();
 }
+
+/**
+ * 一个时间窗：起点与终点基于同一次 Date.now()。
+ * 不能写成 `isoAgo(24)` + `isoNow()`：两次取时间会跨几毫秒，
+ * 24 小时就变成 86400.002 秒，后端直接 400 RANGE_TOO_LARGE（实测踩到，
+ * 表现是「24 小时窗口时好时坏，1 小时永远正常」）。
+ */
+export function isoWindow(hours: number): { start: string; end: string } {
+  const endMs = Date.now();
+  return {
+    start: new Date(endMs - hours * 3600 * 1000).toISOString(),
+    end: new Date(endMs).toISOString(),
+  };
+}

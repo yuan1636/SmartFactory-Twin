@@ -1,6 +1,7 @@
 /** 页面一：工厂数字孪生总览（规格 5.2）。 */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MetricCard } from '../components/MetricCard';
 import { ErrorState } from '../components/ErrorState';
 import { usePolling } from '../hooks/usePolling';
@@ -24,6 +25,7 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 ];
 
 export default function Overview() {
+  const navigate = useNavigate();
   const snapshot = useStore();
   const sceneRef = useRef<SceneHandle>(null);
   const [filter, setFilter] = useState<Filter>('all');
@@ -107,7 +109,11 @@ export default function Overview() {
             <SceneRoot
               ref={sceneRef}
               selectedDeviceId={focused}
-              onSelectDevice={(id) => setFocused(id)}
+              // 规格 6.3：三维里 click 命中设备要直接进监控页（列表行才只做聚焦，见 5.2）
+              onSelectDevice={(id) => {
+                setFocused(id);
+                navigate(`/devices/${id}`);
+              }}
             />
             <div className="viewport__overlay-top">
               {(Object.keys(CAMERA_PRESETS) as PresetKey[]).map((key) => (

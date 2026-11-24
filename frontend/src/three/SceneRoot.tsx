@@ -35,7 +35,11 @@ interface SceneRootProps {
 
 declare global {
   interface Window {
-    __sceneDebug?: { renderInfo: () => SceneStats };
+    __sceneDebug?: {
+      renderInfo: () => SceneStats;
+      /** 只读相机位姿：验收脚本用它确认预设切换有缓动、且镜头不会钻到地面以下 */
+      camera: () => { position: [number, number, number]; target: [number, number, number] };
+    };
   }
 }
 
@@ -311,7 +315,13 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     };
 
     if (import.meta.env.DEV) {
-      window.__sceneDebug = { renderInfo: getStats };
+      window.__sceneDebug = {
+        renderInfo: getStats,
+        camera: () => ({
+          position: camera.position.toArray() as [number, number, number],
+          target: controls.target.toArray() as [number, number, number],
+        }),
+      };
     }
 
     return () => {

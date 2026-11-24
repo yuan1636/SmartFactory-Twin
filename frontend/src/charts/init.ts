@@ -4,7 +4,7 @@
  */
 
 import * as echarts from 'echarts/core';
-import { BarChart, LineChart } from 'echarts/charts';
+import { BarChart, CustomChart, LineChart } from 'echarts/charts';
 import {
   GridComponent,
   LegendComponent,
@@ -16,6 +16,8 @@ import { CanvasRenderer } from 'echarts/renderers';
 echarts.use([
   LineChart,
   BarChart,
+  // 甘特条没有现成图表类型，用 custom 系列画矩形（AI 页真值时间轴）
+  CustomChart,
   GridComponent,
   TooltipComponent,
   LegendComponent,

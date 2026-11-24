@@ -767,6 +767,9 @@ window.__sceneDebug?.renderInfo().calls
 | D-03 | 页面四「AI 预测分析」不含模型，只展示真值与阈值规则 | 模型属第 4 阶段，本阶段若编造预测值会构成虚假数据 |
 | D-04 | `VITE_API_BASE` 由绝对地址 `http://127.0.0.1:8000/api/v1` 改为同源 `/api/v1`，REST 走 Vite 代理 | 后端未挂 CORS 中间件，浏览器直连必然失败（实测报「无法连接后端」）；规格第 12 节第 13 条禁止改后端，故只能前端侧走代理。WS 仍直连 8000（不受同源策略限制） |
 | D-05 | dev 环境三维视口右下角角标同时显示 `fps · draw call` | 规格第 9 节要求把 `renderer.info.render.calls` 打到控制台；无头浏览器读不到控制台，写成可见角标后 10.1.6 才能被脚本验收，且不影响生产构建（`import.meta.env.DEV` 分支） |
+| D-06 | 时间窗统一走 `isoWindow(hours)`，不再用 `isoAgo(h)+isoNow()` 拼窗口 | 两次取时间会跨几毫秒，24 小时变成 86400.002 秒，后端按「> 86400」判 `RANGE_TOO_LARGE` 直接 400。表现是「24 小时窗口时好时坏、1 小时永远正常」，属隐蔽 bug（Batch 2 验收时暴露） |
+| D-07 | `src/services/types.ts` 的 4 个 DTO 按实机响应重写（`alarm_id`/`detected_at`、`record_id`/`finished_at`、`ended_at`、`product_id`/`qualified_rate`） | Batch 1 只写占位页，DTO 是照规格臆测的字段名，与后端真实响应不符；Batch 2 接真实数据前必须先对齐，否则页面全显示 `—` |
+| D-08 | `window.__sceneDebug` 增加只读 `camera()`（仅 dev） | 10.2-7「预设切换有缓动、镜头不钻地」与 10.2-6「hover/点击」原本只能人工判断。暴露只读位姿后，由 `scripts/acceptance-batch2.mjs` 断言，生产构建会被 `import.meta.env.DEV` 分支清掉 |
 
 ---
 

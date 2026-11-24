@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, buildQuery } from './api';
+import { ApiError, buildQuery, isoWindow } from './api';
 import { describeError } from '../utils/errors';
 
 describe('查询串编码（7.1 强制项）', () => {
@@ -38,5 +38,20 @@ describe('错误文案（8.3）', () => {
 
   it('status 0（后端没起）提示检查服务', () => {
     expect(describeError(new ApiError('NETWORK_ERROR', 'fetch failed', 0))).toContain('无法连接后端');
+  });
+});
+
+describe('时间窗（24 小时边界）', () => {
+  it('起止基于同一次取时，跨度精确等于 N 小时，不会多出几毫秒', () => {
+    const { start, end } = isoWindow(24);
+    const span = new Date(end).getTime() - new Date(start).getTime();
+    // 后端上限就是 86400 秒，多 1 毫秒就 400 RANGE_TOO_LARGE
+    expect(span).toBe(24 * 3600 * 1000);
+    expect(span).toBeLessThanOrEqual(86400 * 1000);
+  });
+
+  it('1 小时窗口同样精确', () => {
+    const { start, end } = isoWindow(1);
+    expect(new Date(end).getTime() - new Date(start).getTime()).toBe(3600 * 1000);
   });
 });

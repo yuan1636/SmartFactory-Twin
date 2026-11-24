@@ -125,60 +125,102 @@ export interface LineItem {
   device_count: number;
 }
 
-/** /stats/production 响应（第 2 阶段实机字段）。 */
+/**
+ * /stats/production 响应。
+ * 2026-11-24 实机核对：还带 orders_in_progress / completion_rate / line_id，
+ * 少了它们会让「完成率」和「在制订单」无处可取。
+ */
 export interface ProductionStats {
+  line_id: string | null;
   start: string;
   end: string;
   orders_completed: number;
+  orders_in_progress: number;
   planned_quantity: number;
   actual_quantity: number;
   qualified_quantity: number;
   qualified_rate: number;
+  completion_rate: number;
   utilization: number;
 }
 
+/** /orders 列表项。后端给的是 product_id（不是 product_name），且没 actual_end，只有计划区间。 */
 export interface OrderItem {
   order_id: string;
+  product_id: string;
   line_id: string;
-  product_name: string;
   planned_quantity: number;
   actual_quantity: number;
   qualified_quantity: number;
-  status: string;
   planned_start: string;
   planned_end: string;
-  actual_end: string | null;
+  status: string;
+  qualified_rate: number;
+  completion_rate: number;
 }
 
 export type AlarmLevel = 'WARNING' | 'CRITICAL';
 
+/** 告警类型：后端只产生这三类（2026-11-24 实测 48 条告警均属此三类）。 */
+export type AlarmType = 'TEMPERATURE' | 'VIBRATION' | 'CURRENT';
+
+/** /alarms 列表项。主键是 alarm_id（不是 id），时间是 detected_at（不是 triggered_at）。 */
 export interface AlarmItem {
-  id: number;
+  alarm_id: number;
   device_id: string;
-  alarm_type: string;
+  alarm_type: AlarmType | string;
   alarm_level: AlarmLevel;
   message: string;
-  triggered_at: string;
+  detected_at: string;
   resolved_at: string | null;
-  metric_value: number | null;
-  threshold_value: number | null;
 }
 
+/** PATCH /alarms/{id}/resolve 的返回体，G-10 的两项证据都在这里。 */
+export interface ResolveResult {
+  alarm_id: number;
+  resolved_at: string;
+  device_status: string;
+  open_alarm_count: number;
+}
+
+export type MaintenanceType = 'ROUTINE' | 'REPAIR' | 'INSPECTION';
+
+/** /maintenance 列表项。主键是 record_id，结束时间是 finished_at。 */
 export interface MaintenanceItem {
-  id: number;
+  record_id: number;
   device_id: string;
-  maintenance_type: 'ROUTINE' | 'REPAIR' | 'INSPECTION';
+  maintenance_type: MaintenanceType;
   description: string | null;
   started_at: string;
   finished_at: string | null;
   cost: number | null;
 }
 
+export interface MaintenanceInput {
+  device_id: string;
+  maintenance_type: MaintenanceType;
+  description?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  cost?: number | null;
+}
+
+export interface MaintenanceCreated {
+  record_id: number;
+  device_id: string;
+  maintenance_type: MaintenanceType;
+  started_at: string;
+  finished_at: string | null;
+  cost: number | null;
+  device_status: string;
+}
+
+/** /anomalies 列表项（模拟器写入的真值）。结束时间是 ended_at，不是 finished_at。 */
 export interface AnomalyItem {
   id: number;
   device_id: string;
-  anomaly_type: string;
-  params: Record<string, unknown> | null;
+  anomaly_type: 'TEMP_DRIFT' | 'VIB_SPIKE' | 'CURRENT_ABNORMAL' | string;
   started_at: string;
-  finished_at: string | null;
+  ended_at: string | null;
+  params: Record<string, unknown> | null;
 }

@@ -820,6 +820,78 @@ textarea {
   margin-bottom: var(--sp-3);
 }
 
+/* ---------- Batch 2：生产页 / 告警页 / AI 页 ---------- */
+
+/* .content 没有 flex gap，多张卡片直接并排会贴在一起，页面统一套这一层 */
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.kpi-row--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3) var(--sp-4);
+}
+
+/* AI 页的无模型声明条：必须醒目，不能缩成脚注 */
+.notice-bar {
+  background: rgba(242, 178, 51, 0.08);
+  border: 1px solid rgba(242, 178, 51, 0.35);
+  border-radius: var(--r-card);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.notice-bar strong {
+  color: var(--st-idle);
+  margin-right: 4px;
+}
+
+.reserved-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 240px;
+  border: 1px dashed var(--border);
+  background: transparent;
+}
+
+.reserved-box__title {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.reserved-box__hint {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  max-width: 380px;
+  text-align: center;
+  line-height: 1.7;
+}
+
+.mono-sm {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 动效降级（第 4.3 节） ---------- */
 
 @media (prefers-reduced-motion: reduce) {
