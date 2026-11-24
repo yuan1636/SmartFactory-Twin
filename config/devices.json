@@ -1,0 +1,321 @@
+{
+  "version": "1.0",
+  "note": "设备清单与告警阈值的唯一来源（AGENTS.md 规则 8）。模拟器、后端告警判定、第 4 阶段标注都读这一份，代码里不得再出现 ×1.1 / ×1.25 这类推导式。",
+  "sample_interval_seconds": 2,
+  "drift_period_seconds": 600,
+  "status_machine": {
+    "cycle_minutes": 30,
+    "running_minutes": 26,
+    "idle_minutes": 3,
+    "stopped_minutes": 1
+  },
+  "scheduler": {
+    "seed": 20261124,
+    "window_minutes": 20,
+    "devices_per_window": [1, 2],
+    "max_concurrent": 2
+  },
+  "alarm_cooldown_minutes": 5,
+  "anomaly_types": {
+    "TEMP_DRIFT": {
+      "rise_seconds": 300,
+      "fall_seconds": 120,
+      "slope_per_tick": 0.4,
+      "params": {"slope_per_tick": 0.4, "start_from": "upper"}
+    },
+    "VIB_SPIKE": {
+      "duration_seconds": 40,
+      "amp": 5.0,
+      "sigma": 0.8,
+      "params": {"amp": 5.0, "sigma": 0.8}
+    },
+    "CURRENT_ABNORMAL": {
+      "duration_seconds": 90,
+      "current_ratio": 1.45,
+      "speed_ratio": 0.85,
+      "params": {"current_ratio": 1.45, "speed_ratio": 0.85}
+    }
+  },
+  "devices": [
+    {
+      "device_id": "CNC-01",
+      "device_name": "数控机床 1",
+      "device_type": "CNC",
+      "workshop_id": "WS-A",
+      "line_id": "LINE-A1",
+      "model": "VMC-850",
+      "normal_range": {
+        "temperature": [55.0, 70.0],
+        "vibration": [1.5, 3.0],
+        "current": [6.0, 10.0],
+        "speed": [1200, 1800]
+      },
+      "thresholds": {
+        "temperature": {"warning": 77.0, "critical": 87.5},
+        "vibration": {"warning": 3.30, "critical": 3.75},
+        "current": {"warning": 11.00, "critical": 12.50}
+      },
+      "anomaly_type": "TEMP_DRIFT"
+    },
+    {
+      "device_id": "ROB-01",
+      "device_name": "机械臂 1",
+      "device_type": "ROBOT",
+      "workshop_id": "WS-A",
+      "line_id": "LINE-A1",
+      "model": "IRB-1200",
+      "normal_range": {
+        "temperature": [40.0, 55.0],
+        "vibration": [1.0, 2.5],
+        "current": [3.0, 6.0],
+        "speed": [15, 45]
+      },
+      "thresholds": {
+        "temperature": {"warning": 60.5, "critical": 68.8},
+        "vibration": {"warning": 2.75, "critical": 3.13},
+        "current": {"warning": 6.60, "critical": 7.50}
+      },
+      "anomaly_type": "VIB_SPIKE"
+    },
+    {
+      "device_id": "CONV-01",
+      "device_name": "传送带 1",
+      "device_type": "CONVEYOR",
+      "workshop_id": "WS-A",
+      "line_id": "LINE-A1",
+      "model": "BELT-6M",
+      "normal_range": {
+        "temperature": [35.0, 50.0],
+        "vibration": [2.0, 4.0],
+        "current": [2.0, 5.0],
+        "speed": [600, 1200]
+      },
+      "thresholds": {
+        "temperature": {"warning": 55.0, "critical": 62.5},
+        "vibration": {"warning": 4.40, "critical": 5.00},
+        "current": {"warning": 5.50, "critical": 6.25}
+      },
+      "anomaly_type": "CURRENT_ABNORMAL"
+    },
+    {
+      "device_id": "CNC-02",
+      "device_name": "数控机床 2",
+      "device_type": "CNC",
+      "workshop_id": "WS-A",
+      "line_id": "LINE-A2",
+      "model": "VMC-850",
+      "normal_range": {
+        "temperature": [55.0, 70.0],
+        "vibration": [1.5, 3.0],
+        "current": [6.0, 10.0],
+        "speed": [1200, 1800]
+      },
+      "thresholds": {
+        "temperature": {"warning": 77.0, "critical": 87.5},
+        "vibration": {"warning": 3.30, "critical": 3.75},
+        "current": {"warning": 11.00, "critical": 12.50}
+      },
+      "anomaly_type": "VIB_SPIKE"
+    },
+    {
+      "device_id": "ROB-02",
+      "device_name": "机械臂 2",
+      "device_type": "ROBOT",
+      "workshop_id": "WS-A",
+      "line_id": "LINE-A2",
+      "model": "IRB-1200",
+      "normal_range": {
+        "temperature": [40.0, 55.0],
+        "vibration": [1.0, 2.5],
+        "current": [3.0, 6.0],
+        "speed": [15, 45]
+      },
+      "thresholds": {
+        "temperature": {"warning": 60.5, "critical": 68.8},
+        "vibration": {"warning": 2.75, "critical": 3.13},
+        "current": {"warning": 6.60, "critical": 7.50}
+      },
+      "anomaly_type": "CURRENT_ABNORMAL"
+    },
+    {
+      "device_id": "CONV-02",
+      "device_name": "传送带 2",
+      "device_type": "CONVEYOR",
+      "workshop_id": "WS-A",
+      "line_id": "LINE-A2",
+      "model": "BELT-6M",
+      "normal_range": {
+        "temperature": [35.0, 50.0],
+        "vibration": [2.0, 4.0],
+        "current": [2.0, 5.0],
+        "speed": [600, 1200]
+      },
+      "thresholds": {
+        "temperature": {"warning": 55.0, "critical": 62.5},
+        "vibration": {"warning": 4.40, "critical": 5.00},
+        "current": {"warning": 5.50, "critical": 6.25}
+      },
+      "anomaly_type": "VIB_SPIKE"
+    },
+    {
+      "device_id": "CNC-03",
+      "device_name": "数控机床 3",
+      "device_type": "CNC",
+      "workshop_id": "WS-B",
+      "line_id": "LINE-B1",
+      "model": "VMC-850",
+      "normal_range": {
+        "temperature": [55.0, 70.0],
+        "vibration": [1.5, 3.0],
+        "current": [6.0, 10.0],
+        "speed": [1200, 1800]
+      },
+      "thresholds": {
+        "temperature": {"warning": 77.0, "critical": 87.5},
+        "vibration": {"warning": 3.30, "critical": 3.75},
+        "current": {"warning": 11.00, "critical": 12.50}
+      },
+      "anomaly_type": "CURRENT_ABNORMAL"
+    },
+    {
+      "device_id": "ROB-03",
+      "device_name": "机械臂 3",
+      "device_type": "ROBOT",
+      "workshop_id": "WS-B",
+      "line_id": "LINE-B1",
+      "model": "IRB-1200",
+      "normal_range": {
+        "temperature": [40.0, 55.0],
+        "vibration": [1.0, 2.5],
+        "current": [3.0, 6.0],
+        "speed": [15, 45]
+      },
+      "thresholds": {
+        "temperature": {"warning": 60.5, "critical": 68.8},
+        "vibration": {"warning": 2.75, "critical": 3.13},
+        "current": {"warning": 6.60, "critical": 7.50}
+      },
+      "anomaly_type": "TEMP_DRIFT"
+    },
+    {
+      "device_id": "INSP-01",
+      "device_name": "自动检测台 1",
+      "device_type": "INSPECTION",
+      "workshop_id": "WS-B",
+      "line_id": "LINE-B1",
+      "model": "VIS-200",
+      "normal_range": {
+        "temperature": [30.0, 45.0],
+        "vibration": [0.5, 1.5],
+        "current": [1.0, 3.0],
+        "speed": [5, 20]
+      },
+      "thresholds": {
+        "temperature": {"warning": 49.5, "critical": 56.3},
+        "vibration": {"warning": 1.65, "critical": 1.88},
+        "current": {"warning": 3.30, "critical": 3.75}
+      },
+      "anomaly_type": "TEMP_DRIFT"
+    },
+    {
+      "device_id": "CNC-04",
+      "device_name": "数控机床 4",
+      "device_type": "CNC",
+      "workshop_id": "WS-B",
+      "line_id": "LINE-B2",
+      "model": "VMC-850",
+      "normal_range": {
+        "temperature": [55.0, 70.0],
+        "vibration": [1.5, 3.0],
+        "current": [6.0, 10.0],
+        "speed": [1200, 1800]
+      },
+      "thresholds": {
+        "temperature": {"warning": 77.0, "critical": 87.5},
+        "vibration": {"warning": 3.30, "critical": 3.75},
+        "current": {"warning": 11.00, "critical": 12.50}
+      },
+      "anomaly_type": "TEMP_DRIFT"
+    },
+    {
+      "device_id": "ROB-04",
+      "device_name": "机械臂 4",
+      "device_type": "ROBOT",
+      "workshop_id": "WS-B",
+      "line_id": "LINE-B2",
+      "model": "IRB-1200",
+      "normal_range": {
+        "temperature": [40.0, 55.0],
+        "vibration": [1.0, 2.5],
+        "current": [3.0, 6.0],
+        "speed": [15, 45]
+      },
+      "thresholds": {
+        "temperature": {"warning": 60.5, "critical": 68.8},
+        "vibration": {"warning": 2.75, "critical": 3.13},
+        "current": {"warning": 6.60, "critical": 7.50}
+      },
+      "anomaly_type": "VIB_SPIKE"
+    },
+    {
+      "device_id": "INSP-02",
+      "device_name": "自动检测台 2",
+      "device_type": "INSPECTION",
+      "workshop_id": "WS-B",
+      "line_id": "LINE-B2",
+      "model": "VIS-200",
+      "normal_range": {
+        "temperature": [30.0, 45.0],
+        "vibration": [0.5, 1.5],
+        "current": [1.0, 3.0],
+        "speed": [5, 20]
+      },
+      "thresholds": {
+        "temperature": {"warning": 49.5, "critical": 56.3},
+        "vibration": {"warning": 1.65, "critical": 1.88},
+        "current": {"warning": 3.30, "critical": 3.75}
+      },
+      "anomaly_type": "CURRENT_ABNORMAL"
+    },
+    {
+      "device_id": "AIR-01",
+      "device_name": "空压机",
+      "device_type": "AUX",
+      "workshop_id": null,
+      "line_id": null,
+      "model": "GA-15",
+      "normal_range": {
+        "temperature": [60.0, 85.0],
+        "vibration": [2.5, 5.0],
+        "current": [10.0, 18.0],
+        "speed": [1400, 2900]
+      },
+      "thresholds": {
+        "temperature": {"warning": 93.5, "critical": 106.3},
+        "vibration": {"warning": 5.50, "critical": 6.25},
+        "current": {"warning": 19.80, "critical": 22.50}
+      },
+      "anomaly_type": "TEMP_DRIFT"
+    },
+    {
+      "device_id": "PUMP-01",
+      "device_name": "冷却泵",
+      "device_type": "AUX",
+      "workshop_id": null,
+      "line_id": null,
+      "model": "CP-50",
+      "normal_range": {
+        "temperature": [30.0, 50.0],
+        "vibration": [1.5, 3.5],
+        "current": [3.0, 8.0],
+        "speed": [1400, 2900]
+      },
+      "thresholds": {
+        "temperature": {"warning": 55.0, "critical": 62.5},
+        "vibration": {"warning": 3.85, "critical": 4.38},
+        "current": {"warning": 8.80, "critical": 10.00}
+      },
+      "anomaly_type": "VIB_SPIKE"
+    }
+  ]
+}

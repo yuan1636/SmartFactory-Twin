@@ -1,0 +1,8 @@
+# SmartFactory Twin —— 第 2 阶段依赖（版本按 docs/spec_phase2.md G-15 锁定）
+# 说明：应用不容器化，数据库单独用 docker 跑（见 docker-compose.yml）。
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+pydantic-settings==2.6.1
+pandas==2.2.3

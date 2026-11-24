@@ -1,0 +1,28 @@
+# 只用容器跑数据库；应用本身跑本地虚拟环境（见 docs/spec_phase2.md G-15）
+services:
+  db:
+    image: postgres:16
+    container_name: sftwin-db
+    environment:
+      POSTGRES_DB: smartfactory
+      POSTGRES_USER: sf
+      # 与 docs/spec_phase2.md 7.1 的 docker run 命令保持一致，便于两处等价
+      POSTGRES_PASSWORD: sf_dev_pw
+      # 库内统一 UTC（AGENTS.md 规则 3）
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      # 宿主机 5433 → 容器 5432，避免与本机已装的 PostgreSQL 抢 5432
+      - "5433:5432"
+    volumes:
+      - sftwin_pgdata:/var/lib/postgresql/data
+      # 把 database/ 挂进容器，reset.sql 里的 \i 才能在容器内找到 schema/seed
+      - ./database:/database:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sf -d smartfactory"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sftwin_pgdata:
