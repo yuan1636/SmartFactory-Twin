@@ -3,18 +3,18 @@
 以虚拟机械加工工厂为场景（1 工厂 / 2 车间 / 4 生产线 / 14 台设备）的数字孪生演示系统。
 **第一版全部数据为模拟数据，不得对外表述为真实工厂数据。**
 
-本仓库当前处于 **第 2 阶段**：Python 模拟器 + FastAPI 后端 + PostgreSQL。
+本仓库当前处于 **第 3 阶段（前端）Batch 1**：三维工厂总览 + 设备监控页已可运行，生产分析 / 告警与维护 / AI 预测三页在 Batch 2 交付。
 
 ## 当前进度
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 第 1 阶段 | 业务底座与文档（方案、架构、数据模型、设备清单） | 已完成，见 `docs/方案.md` |
-| **第 2 阶段** | **模拟器 + REST API + WebSocket 推送 + 告警判定 + 生产订单推进** | **本次交付，按 `docs/spec_phase2.md` 实现** |
-| 第 3 阶段 | React + TypeScript + Three.js + ECharts 前端 | 未开始 |
+| 第 2 阶段 | 模拟器 + REST API + WebSocket 推送 + 告警判定 + 生产订单推进 | 已完成，见 `docs/spec_phase2.md`、`docs/acceptance_phase2.md` |
+| **第 3 阶段** | **React + TypeScript + Three.js + ECharts 前端** | **Batch 1 已完成并验收**（三维总览 + 设备监控），Batch 2 待做 |
 | 第 4 阶段 | Kafka 接入、TimescaleDB、AI 异常检测 / 故障预测 / 产量预测 | 未开始 |
 
-第 2 阶段的施工依据是 `docs/spec_phase2.md`（v1.0 已冻结）。代码与文档冲突时以文档为准。
+第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.0 已冻结**），验收记录见 `docs/acceptance_phase3.md`。
 
 ## 目录结构
 
@@ -27,6 +27,12 @@ database/schema.sql          建表脚本（只建不删，可重复执行）
 database/seed.sql            种子数据（2 车间 / 4 产线 / 14 设备）
 database/reset.sql           清库重建（⚠️ 会清空全部数据）
 database/reset_drop_only.sql 只删除表（配合分步重建）
+frontend/                    第 3 阶段前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5）
+  src/three/layout.ts        14 台设备三维坐标 + 六类机身尺寸（唯一数据源）
+  src/three/builders.ts      程序化几何：厂房 / 产线色带 / 六类设备
+  src/three/SceneRoot.tsx    渲染循环、相机预设、射线拾取、状态材质切换
+  src/services/              API 客户端、WS 客户端（退避重连）、模块级 store、格式化
+  src/pages/                 总览 / 设备监控（Batch 1）；生产 / 告警 / AI（Batch 2 占位）
 app/                         FastAPI 后端
   main.py                    应用入口（uvicorn app.main:app）
   config.py                  配置与设备配置加载
@@ -109,6 +115,30 @@ python -m data_pipeline.simulator                                # 常驻，Ctrl
 
 预期：每个 tick 打印一行日志，退出时打印 `==== 模拟器统计 ====` 统计块。
 
+### 6. 启动前端（第 3 阶段）
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+打开 <http://127.0.0.1:5173/overview>（必须是 `127.0.0.1`，用 `localhost` 会因 IPv6 解析白等约 2 秒）。
+
+- 三维总览：14 台设备随模拟器状态变化，状态灯 / 地面光环 / 告警描边可辨；
+- 设备监控：`/devices/CNC-01`，四指标曲线带 WARNING / CRITICAL 参考线，1h / 6h / 24h 切换；
+- REST 走 Vite 的 `/api` 代理（后端没有 CORS 中间件，浏览器直连 8000 会被拦），
+  WebSocket 直连 `ws://127.0.0.1:8000`。原因见 `docs/spec_phase3.md` 偏差 D-04。
+
+前端单测（39 个用例）：
+
+```powershell
+cd frontend
+npm run test
+```
+
+预期：`Test Files 7 passed`、`Tests 39 passed`。
+
 ## ⚠️ 关于 reset.sql
 
 `database/reset.sql` 会 **删除全部 8 张表及其所有数据**（遥测、订单、告警、维护记录、异常真值全部清空，不可恢复）。
@@ -135,6 +165,23 @@ Get-Content backup\smartfactory.sql | docker exec -i sftwin-db psql -U sf -d sma
 ```
 
 ## 验收
+
+### 第 3 阶段（进行中，Batch 1 部分）
+
+规格第 10 节的 8 条命令 + 12 项人工检查，逐条记录在 **`docs/acceptance_phase3.md`**
+（三列：结论 / 命令 / 实际输出）。Batch 1 范围内 8 条命令全部通过；
+人工检查第 5～7 项（动效、hover 与点击、镜头预设）需人工在浏览器里看，已在文档中标注「未验证」。
+
+若要自己复跑：
+
+```powershell
+cd frontend
+npm run build      # 预期 ✓ built in ...，0 error
+npm run test       # 预期 7 files / 39 tests passed
+npm run dev        # 另开窗口后访问 /overview、/devices 等
+```
+
+### 第 2 阶段
 
 第 2 阶段的 15 项验收命令与预期输出见 `docs/spec_phase2.md` 第 7 节，逐条可复制执行。
 **回归记录见 `docs/acceptance_phase2.md`**（每条都带"结论 / 命令 / 实际输出"三列，2026-11-24 实测：

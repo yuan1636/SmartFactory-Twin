@@ -1,0 +1,63 @@
+/* 设计令牌（docs/spec_phase3.md 第 4 节）。
+   深色工业风是唯一主题（C-2），因此这里不再按主题分组，只保留一套值。
+   颜色语义：红 = 故障/告警、绿 = 正常，与国际工业惯例一致，与股市红涨绿跌无关。 */
+
+:root {
+  /* 背景与描边 */
+  --bg-scene: #0b1018;
+  --bg-panel: #131c28;
+  --bg-panel-alt: #182333;
+  --border: #243449;
+
+  /* 文字 */
+  --text-primary: #e8eef6;
+  --text-secondary: #94a6bd;
+  --text-muted: #64748b;
+
+  /* 品牌 */
+  --accent: #2e9be6;
+  --accent-dim: rgba(46, 155, 230, 0.16);
+
+  /* 设备五态 */
+  --st-running: #22c55e;
+  --st-idle: #f2b233;
+  --st-stopped: #64748b;
+  --st-alarm: #ef4444;
+  --st-maint: #3b82f6;
+
+  /* 四指标 */
+  --m-temp: #f97316;
+  --m-vib: #a855f7;
+  --m-current: #3b82f6;
+  --m-speed: #14b8a6;
+
+  /* 阈值参考线 */
+  --th-warn: #f2b233;
+  --th-crit: #ef4444;
+
+  /* 字体 */
+  --font-sans: 'PingFang SC', 'Microsoft YaHei', 'Source Han Sans SC', system-ui, sans-serif;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-kpi: 28px;
+
+  /* 间距（8pt 栅格） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* 圆角 */
+  --r-card: 8px;
+  --r-btn: 6px;
+  --r-tag: 4px;
+
+  /* 布局 */
+  --nav-w: 200px;
+  --topbar-h: 56px;
+}

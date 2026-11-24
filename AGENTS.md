@@ -29,9 +29,10 @@
 | `docs/方案.md` | 项目总体方案（实验方案 V1.0）：定位、架构、数据模型、12～16 周路线、验收标准、风险边界 | 已定稿 |
 | `docs/spec_phase2.md` | 第 2 阶段实现规格（模拟器 + FastAPI + PostgreSQL） | **v1.1 已冻结、生效**（2026-11-24 修订 7.10 判定区间与 7.14 执行前置），第 1～8 节齐全，是第 2 阶段的唯一施工依据；代码已按此实现并跑通验收 |
 | `docs/acceptance_phase2.md` | 第 2 阶段验收回归记录（7.1～7.16 逐条结论 + 命令 + 实际输出） | 已完成：14 通过 / 0 不通过 / 1 未验证（7.15 真 Ctrl+C 待人工按一次） |
-| `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v0.9 草案**，待作者确认 3 项（第 13 节 C-1～C-3）后冻结为 v1.0；未冻结前不得据此写代码 |
+| `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v1.0 已冻结、生效**（2026-11-24 作者确认 C-1～C-3），第 1～13 节齐全，是第 3 阶段唯一施工依据 |
+| `docs/acceptance_phase3.md` | 第 3 阶段 Batch 1 验收记录（10.1 八条命令 + 10.2 十二项人工检查） | 8 条命令全过；人工检查 1～4、8、9 已核实，5～7 待人工，10～12 属 Batch 2 |
+| `frontend/` | 第 3 阶段前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | Batch 1：三维总览 + 设备监控；`npm run test` 39 passed |
 | `tests/` | 最小测试网（pytest + httpx，8 个用例） | 8 passed；依赖在 `requirements-dev.txt`，不进 `requirements.txt` |
-| `docs/spec_phase3.md` | 第 3 阶段规格（前端 + Three.js） | 未开始 |
 
 **读文档顺序**：本文件 → `docs/方案.md` → 当前阶段的 `docs/spec_phaseX.md`。规格未定的部分不许自行发挥，先回来问。
 
@@ -64,7 +65,9 @@
 - **第 2 阶段（Python 模拟器 + FastAPI + PostgreSQL）：已完成并按第 7 节验收（14 通过 / 1 未验证）。**
   交付物：`app/`（18 节接口 + 告警扫描/收敛 + WebSocket）、`data_pipeline/`（模拟器 4 参数 + 三类注入 + 订单推进 + 回填）、
   `database/`（schema / seed / reset）、`config/devices.json`、`tests/`（8 用例）。
-- 当前阶段：**第 3 阶段（React + Three.js + ECharts 前端）**，施工依据 `docs/spec_phase3.md`（v0.9 草案，待确认 C-1～C-3 后冻结）。
+- 当前阶段：**第 3 阶段（React + Three.js + ECharts 前端）**，施工依据 `docs/spec_phase3.md`（**v1.0 已冻结**）。分批交付见该文件第 11 节。
+- **第 3 阶段 Batch 1 已完成并验收**（2026-11-24）：`frontend/` 工程骨架、数据层（api/ws/store/format）、三维场景（程序化几何 + 状态材质池 + CSS2D 标签 + 射线拾取 + 相机预设）、总览页、设备监控页、39 个前端单测。8 条验收命令全过，记录见 `docs/acceptance_phase3.md`。
+- 第 3 阶段实施中产生的两处偏差已写入 `docs/spec_phase3.md` 第 12 节：**D-04** REST 改走 Vite `/api` 代理（后端无 CORS，直连必失败）、**D-05** dev 角标显示 draw call（便于脚本验收 10.1.6）。
 - 已裁定并写入 `docs/spec_phase2.md`（v1.1 冻结）的决策：采样 2 秒、新增 `workshops` / `production_lines` / `anomaly_injection` 三张表、第 2 阶段不启用 TimescaleDB、不做认证、告警 5 分钟冷却与 G-10 解除规则、`--backfill-days` 冷启动参数。实现与规格冲突时以规格为准。
 - **7.10 与 7.14 的口径问题已在 v1.1 修正**（7.10 判定区间改为 `604800 ≤ 总数 ≤ 604900`；7.14 补「7.12 注入后 45 秒内执行」前置）。代码零改动。
 - **唯一未验证项 7.15**：Windows 下无法程序化投递真 Ctrl+C，需作者手工按一次后回填结论。

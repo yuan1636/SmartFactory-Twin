@@ -34,3 +34,6 @@ output/
 
 # Agent 工作记忆（本地开发上下文，不属于工程交付物）
 .workbuddy/
+
+# TypeScript 增量构建信息
+frontend/*.tsbuildinfo
