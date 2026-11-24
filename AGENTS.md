@@ -31,6 +31,7 @@
 | `docs/acceptance_phase2.md` | 第 2 阶段验收回归记录（7.1～7.16 逐条结论 + 命令 + 实际输出） | 已完成：14 通过 / 0 不通过 / 1 未验证（7.15 真 Ctrl+C 待人工按一次） |
 | `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v1.1 生效**（v1.0 于 2026-11-24 冻结；同日增补 §6.7 产线运行动画），是第 3 阶段唯一施工依据 |
 | `docs/acceptance_phase3.md` | 第 3 阶段验收记录（Batch 1 / Batch 2 / 第 3 批产线运行动画） | 10.1 八条与动画 17 项全过；Batch 2 的 24 项复跑仍全过；保留人工项：动效观感、真实帧率、滚筒停转样本 |
+| `docs/spec_phase4.md` | 第 4 阶段实现规格（数据处理流水线 + AI 模型） | **v0.1 草案，未冻结**；施工顺序 C 先 A 后（作者 2026-11-24 确认「先模型后管道」）；第 3 节 G-01～G-09 待作者确认后才能动代码 |
 | `frontend/` | 第 3 阶段前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | 五个可用页齐全 + 三维产线运行动画；`npm run test` 77 passed |
 | `scripts/` | `start-all.ps1`（一键起库/后端/模拟器/前端）、`acceptance-batch2.mjs`（CDP 页面级 24 项）、`acceptance-motion.mjs`（产线运行动画 17 项）、`lib/cdp.mjs`（共用 CDP 底座） | 三者均已实测跑通 |
 | `tests/` | 最小测试网（pytest + httpx，8 个用例） | 8 passed；依赖在 `requirements-dev.txt`，不进 `requirements.txt` |
@@ -66,12 +67,13 @@
 - **第 2 阶段（Python 模拟器 + FastAPI + PostgreSQL）：已完成并按第 7 节验收（14 通过 / 1 未验证）。**
   交付物：`app/`（18 节接口 + 告警扫描/收敛 + WebSocket）、`data_pipeline/`（模拟器 4 参数 + 三类注入 + 订单推进 + 回填）、
   `database/`（schema / seed / reset）、`config/devices.json`、`tests/`（8 用例）。
-- 当前阶段：**第 3 阶段已交付完毕**（施工依据 `docs/spec_phase3.md` v1.1，分批见该文件第 11 节）；下一阶段（Kafka / TimescaleDB / AI 模型）尚未立项，动工前必须先产出 `docs/spec_phase4.md` 并确认缺口清单。
+- 当前阶段：**第 3 阶段已交付完毕**（施工依据 `docs/spec_phase3.md` v1.1，分批见该文件第 11 节）。
+- **第 4 阶段已立项，规格处于 v0.1 草案阶段**（`docs/spec_phase4.md`）：实测基线 81.4 万行遥测 / 180MB / 219 条注入真值（正例占 2.6%，类别差 10.5 倍）；六块按 C 异常检测 → F 前端落地 → B TimescaleDB → A Kafka → D 故障风险 → E 产量预测 的顺序交付。**G-01～G-09 未确认前禁止写代码**。
 - **作者 2026-11-24 的两个后续要求已登记**：①「三维产线要能动起来」→ 已实现（§6.7，17 项断言全过）；②「模型太粗糙」→ 作者确认**按计划留到第 6 阶段「优化与展示」**，`factory_models/` 继续为空占位，任何提前引入 GLB 的动作都属超范围。
 - **第 3 阶段已完成并验收**（2026-11-24，三批）：Batch 1 工程骨架、数据层、三维场景、总览页、设备监控页；Batch 2 生产分析页、告警与维护页、AI 真值页、一键启动脚本；第 3 批三维产线运行动画（物料流动 + 排队堵料 + 滚筒自转 + 机器人摆动 + 无数据冻结）。前端单测 77 个，Batch 2 的 24 项与动画 17 项全过，记录见 `docs/acceptance_phase3.md`。
 - 第 3 阶段实施中产生的偏差已写入 `docs/spec_phase3.md` 第 12 节：**D-04** REST 改走 Vite `/api` 代理（后端无 CORS，直连必失败）；**D-05** dev 角标显示 draw call（便于脚本验收 10.1.6）；**D-06** 时间窗改用 `isoWindow()` 单次取时（否则 24h 窗口会因多出几毫秒被判 `RANGE_TOO_LARGE`）；**D-07** 4 个 DTO 按实机响应重写；**D-08** `__sceneDebug.camera()`（仅 dev，供脚本验缓动与不钻地）；**D-09** 增补 §6.7 产线运行动画（视觉动画不属于第 12 节禁止的物理仿真）；**D-10** `__sceneDebug.lineMotion()` / `deviceStates()`（仅 dev，供脚本断言闸门、队列与冻结）。
 - 第 3 阶段验收后仍保留两条人工判断项：动效观感（RUNNING 呼吸 / ALARM 闪烁是否刺眼）、真实帧率（无头环境是软渲染，不作结论）。
-- **下一步是第 4 阶段**（Kafka / TimescaleDB / AI 模型），尚未开始，须先写 `docs/spec_phase4.md` 并走同样的缺口清单确认流程。
+- **下一步是第 4 阶段**（Kafka / TimescaleDB / AI 模型）：`docs/spec_phase4.md` v0.1 草案已产出，等作者确认第 3 节 G 组九项后升 v1.0 冻结，再按第 12 节 5 批顺序施工。
 - 已裁定并写入 `docs/spec_phase2.md`（v1.1 冻结）的决策：采样 2 秒、新增 `workshops` / `production_lines` / `anomaly_injection` 三张表、第 2 阶段不启用 TimescaleDB、不做认证、告警 5 分钟冷却与 G-10 解除规则、`--backfill-days` 冷启动参数。实现与规格冲突时以规格为准。
 - **7.10 与 7.14 的口径问题已在 v1.1 修正**（7.10 判定区间改为 `604800 ≤ 总数 ≤ 604900`；7.14 补「7.12 注入后 45 秒内执行」前置）。代码零改动。
 - **唯一未验证项 7.15**：Windows 下无法程序化投递真 Ctrl+C，需作者手工按一次后回填结论。
