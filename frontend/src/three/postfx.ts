@@ -34,7 +34,7 @@ export const POSTFX = {
    * 通道保留是为了不动既有验收链（pass 数量与顺序），不是忘了关。
    * 不变量写在 `sky.test.ts`：bloomThreshold > SKY_INTENSITY。
    */
-  bloomThreshold: 3.2,
+  bloomThreshold: 0.85, // 暗青背景线性 <0.05，回归常规阈值；白底时代的 3.2 作废（sky.ts）
 } as const;
 
 /**

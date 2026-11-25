@@ -59,11 +59,11 @@ const main = async () => {
   );
   check('OutputPass 在 SMAA 之前（LDR 上做边缘检测）', p.passes.indexOf('OutputPass') < p.passes.indexOf('SMAAPass'));
   check(
-    'Bloom 三项（0.35 / 0.6 / 3.2）',
+    'Bloom 三项（0.35 / 0.6 / 0.85）',
     Math.abs(p.bloom.strength - 0.35) < 0.01
       && Math.abs(p.bloom.radius - 0.6) < 0.01
-      // 阈值 0.85→3.2：作者 2026-11-25 要求白底，白底线性 3.0，阈值低于它会整屏泛白（即"雾感"）
-      && Math.abs(p.bloom.threshold - 3.2) < 0.01,
+      // 阈值 3.2→0.85：背景回暗青渐变（线性 <0.05），白底时代的 3.2 作废（作者 2026-11-25 整体色调亮化）
+      && Math.abs(p.bloom.threshold - 0.85) < 0.01,
     `${p.bloom.strength} / ${p.bloom.radius} / ${p.bloom.threshold}`,
   );
   // 作者 2026-11-25 三改：near 28→26/far 120→110 → 背景改渐变 → 「不要迷雾，背景换白色」。

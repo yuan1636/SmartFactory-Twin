@@ -19,7 +19,7 @@ import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from 
 import { createMotion, type MotionSnapshot } from './motion';
 import { createPostFx, POSTFX, type PostFx } from './postfx';
 import { LINE_SCENARIOS, overriddenState, scenarioBadgeText } from './scenario';
-import { SKY_COLOR, SKY_INTENSITY, hexToInt, makeSkyTexture } from './sky';
+import { SKY_CLEAR_HEX, SKY_INTENSITY, makeSkyTexture } from './sky';
 
 export interface SceneStats {
   /** 整链总 draw call（场景 + 所有后处理 pass），D1 起验收按这个数算 */
@@ -168,7 +168,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     if (!host) return;
 
     const scene = new THREE.Scene();
-    // 背景：纯白贴图 + backgroundIntensity 推到 HDR（作者 2026-11-25「背景换成白色」）。
+    // 背景：暗青竖向渐变贴图（作者 2026-11-25 整体色调亮化，参考智慧车间 HUD 截图）。
+    // 贴图里填的是 ACES 补偿值（见 sky.ts），backgroundIntensity 回到 1.0。
     // 不用 scene.background = new THREE.Color(0xffffff)：Color 走 clearColor 会被夹在 [0,1]，
     // 过 ACES 后屏幕上只有 #d1d1d1（浅灰）。理由与实测值见 sky.ts。
     const backgroundTexture = makeSkyTexture();
@@ -188,7 +189,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     // 清屏色=白：背景贴图始终在，清屏色只在贴图拆掉的那一帧可见，与画布保持一致避免闪一下
-    renderer.setClearColor(hexToInt(SKY_COLOR), 1);
+    renderer.setClearColor(SKY_CLEAR_HEX, 1); // SKY_CLEAR_HEX 已是 0xRRGGBB 整数（sky.ts）
     // ACESFilmic 必须在加 Bloom 之前设：NoToneMapping 下高光会被直接截断成纯白块
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = POSTFX.exposure;

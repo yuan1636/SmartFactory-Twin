@@ -213,7 +213,7 @@ export function createMaterials(): SceneMaterials {
     }),
     strip: new THREE.MeshBasicMaterial({ color: 0x1e3a5f, transparent: true, opacity: 0.9 }),
     corridor: new THREE.MeshBasicMaterial({ color: 0x16222f }),
-    pave: new THREE.MeshBasicMaterial({ color: 0x141e2b }),
+    pave: new THREE.MeshBasicMaterial({ color: 0x676f76 }), // ACES 补偿值：屏幕显示 #4e565e（参考图的中灰地面）,
     // 带面纹路比色带亮一档，靠"动"被看见；物料比机身浅，深色地面上才分得出来
     cleat: new THREE.MeshBasicMaterial({ color: 0x356d9e, transparent: true, opacity: 0.85, toneMapped: false }),
     workpiece: new THREE.MeshStandardMaterial({ color: 0x9fb2c4, roughness: 0.45, metalness: 0.6 }),
