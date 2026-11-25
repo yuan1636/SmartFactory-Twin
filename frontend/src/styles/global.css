@@ -558,8 +558,8 @@ textarea {
 
 .viewport {
   position: relative;
-  /* 三维背景是白底（作者 2026-11-25），圆角裁切处不能露出深色底 */
-  background: #fff;
+  /* 三维背景是暗青渐变（作者 2026-11-25 整体色调亮化），外露边缘/首帧与场景同色系 */
+  background: #17333d;
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   overflow: hidden;
@@ -570,28 +570,27 @@ textarea {
   display: block;
 }
 
-/* 预设/巡游按钮压在三维画面上，而画面已改白底：原来的 ghost 样式（浅灰字 + 透明底）
-   在白底上对比度不足，这里给半透明白底 + 深色字，任何机位下都能读 */
+/* 预设/巡游按钮压在三维画面上：画面是暗青背景，按钮用 HUD 风格深青半透明底 +
+   青描边 + 浅字（参考智慧车间运营中心截图的玻璃面板） */
 .viewport__overlay-top .btn {
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(71, 86, 106, 0.35);
-  color: #253243;
+  background: rgba(9, 34, 42, 0.72);
+  border-color: rgba(56, 200, 216, 0.4);
+  color: #cfeef5;
 }
 
 .viewport__overlay-top .btn:hover {
-  background: #fff;
-  border-color: #47566a;
-  color: #101a26;
+  background: rgba(18, 53, 64, 0.9);
+  border-color: rgba(56, 200, 216, 0.85);
+  color: #ffffff;
 }
 
-/* 视口覆盖层：背景已改白底（作者 2026-11-25），浅色文字在白上看不清，
-   这两处与右上角预设按钮统一改成深色字 + 半透明白底 */
+/* 视口覆盖层：背景已改暗青（作者 2026-11-25 整体色调亮化），与 HUD 按钮统一浅青字 */
 .viewport__fps {
   position: absolute;
   bottom: var(--sp-2);
   right: var(--sp-3);
   font-size: 11px;
-  color: #47566a;
+  color: #8fb0bd;
   font-variant-numeric: tabular-nums;
   z-index: 5;
 }
@@ -601,7 +600,7 @@ textarea {
   bottom: var(--sp-2);
   left: var(--sp-3);
   font-size: 11px;
-  color: #47566a;
+  color: #8fb0bd;
   z-index: 5;
 }
 
@@ -656,9 +655,9 @@ textarea {
 /* CSS2D 设备标签 */
 .device-label {
   font-size: 11px;
-  color: var(--text-secondary);
-  background: rgba(11, 16, 24, 0.62);
-  border: 1px solid rgba(36, 52, 73, 0.9);
+  color: #cfeef5;
+  background: rgba(9, 34, 42, 0.72);
+  border: 1px solid rgba(56, 200, 216, 0.4);
   border-radius: 3px;
   padding: 0 4px;
   white-space: nowrap;
@@ -740,7 +739,7 @@ textarea {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+  text-shadow: 0 1px 2px rgba(4, 14, 20, 0.8);
 }
 
 /* 按需详情卡：唯一的常驻浮层例外（点击设备才出现，浮在画布左下角）。

@@ -4,19 +4,19 @@
 
 :root {
   /* 背景与描边 */
-  --bg-scene: #0b1018; /* 页面/表单底色（深色 UI 不变）；三维画布已改白底，见 sky.ts 与 .viewport */
-  --bg-panel: #131c28;
-  --bg-panel-alt: #182333;
-  --border: #243449;
+  --bg-scene: #0c222b; /* 页面/表单底色：深青 HUD 色系（作者 2026-11-25 整体色调亮化）；三维背景渐变同色系，见 sky.ts */
+  --bg-panel: #0f2a33;
+  --bg-panel-alt: #123540;
+  --border: #1f4a56;
 
   /* 文字 */
   --text-primary: #e8eef6;
-  --text-secondary: #94a6bd;
+  --text-secondary: #8fb0bd;
   --text-muted: #64748b;
 
   /* 品牌 */
-  --accent: #2e9be6;
-  --accent-dim: rgba(46, 155, 230, 0.16);
+  --accent: #38c8d8;
+  --accent-dim: rgba(56, 200, 216, 0.15);
 
   /* 设备五态 */
   --st-running: #22c55e;
