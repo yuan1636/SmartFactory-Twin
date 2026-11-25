@@ -26,15 +26,23 @@ export const POSTFX = {
   exposure: 1.05,
   bloomStrength: 0.35,
   bloomRadius: 0.6,
-  bloomThreshold: 0.85,
+  /**
+   * 作者 2026-11-25 要求「不要迷雾、背景换白色」后，阈值从 0.85 抬到 3.2。
+   * 原因：白底被 `SKY_INTENSITY` 推到线性 3.0，阈值低于它整屏就会蒙一层白光——
+   * 那层白光正是"雾感"的来源。阈值 3.2 > 3.0，白底不再泛光。
+   * 副作用：场景内最亮的发光体（灯带等）线性值都在 1 以下，本版起 bloom 实质不触发；
+   * 通道保留是为了不动既有验收链（pass 数量与顺序），不是忘了关。
+   * 不变量写在 `sky.test.ts`：bloomThreshold > SKY_INTENSITY。
+   */
+  bloomThreshold: 3.2,
 } as const;
 
 /**
- * 雾：作者 2026-11-25 调整（near 28→26、far 120→110）：让远处更早淡出，纵深感更强。
- * 雾色 0x16202c 正好取背景渐变的中段色——远处物体淡出到"中段天空色"，
- * 上下两端（更暗）不会被雾冲淡成一条色带。
+ * 雾：作者 2026-11-25 明确要求「不要迷雾」，本版**已移除**（`scene.fog = null`）。
+ * 历史（留痕，别再按旧文档找）：v1 是 Fog(0x0b1018, 28, 120)；
+ * v2 收到 near 26 / far 110 并把雾色调成背景渐变中段；v3 连雾一起去掉，改白底。
+ * 保留这个空说明是为了让后来人知道"这里曾经有雾、为什么没了"，而不是以为漏了。
  */
-export const FOG = { color: 0x16202c, near: 26, far: 110 } as const;
 
 export interface PostFx {
   render: () => void;

@@ -59,16 +59,17 @@ const main = async () => {
   );
   check('OutputPass 在 SMAA 之前（LDR 上做边缘检测）', p.passes.indexOf('OutputPass') < p.passes.indexOf('SMAAPass'));
   check(
-    'Bloom 三项与规格一致（0.35 / 0.6 / 0.85）',
+    'Bloom 三项（0.35 / 0.6 / 3.2）',
     Math.abs(p.bloom.strength - 0.35) < 0.01
       && Math.abs(p.bloom.radius - 0.6) < 0.01
-      && Math.abs(p.bloom.threshold - 0.85) < 0.01,
+      // 阈值 0.85→3.2：作者 2026-11-25 要求白底，白底线性 3.0，阈值低于它会整屏泛白（即"雾感"）
+      && Math.abs(p.bloom.threshold - 3.2) < 0.01,
     `${p.bloom.strength} / ${p.bloom.radius} / ${p.bloom.threshold}`,
   );
-  // 作者 2026-11-25 调整：near 28→26、far 120→110，雾色改为背景渐变中段色 #16202c
-  check('雾为 Fog(near=26, far=110) 且雾色取背景渐变中段 #16202c',
-    !!p.fog && p.fog.near === 26 && p.fog.far === 110 && p.fog.color === '#16202c',
-    p.fog ? `${p.fog.color} ${p.fog.near}~${p.fog.far}` : '无雾');
+  // 作者 2026-11-25 三改：near 28→26/far 120→110 → 背景改渐变 → 「不要迷雾，背景换白色」。
+  // 本版雾已移除（scene.fog = null），这条断言从此前的"雾参数对不对"改成"雾确实没了"。
+  check('雾已移除（作者要求「不要迷雾」）', p.fog === null,
+    p.fog ? `仍有雾 ${p.fog.color} ${p.fog.near}~${p.fog.far}` : 'scene.fog = null');
 
   // 先读整链总数，再测场景自身（measureSceneCalls 会额外渲一帧，必须在前面读）
   const prof = JSON.parse(await session.evaluate('JSON.stringify(window.__sceneDebug.profile())'));

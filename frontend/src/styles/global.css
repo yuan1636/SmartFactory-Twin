@@ -558,7 +558,8 @@ textarea {
 
 .viewport {
   position: relative;
-  background: var(--bg-scene);
+  /* 三维背景是白底（作者 2026-11-25），圆角裁切处不能露出深色底 */
+  background: #fff;
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   overflow: hidden;
@@ -578,12 +579,28 @@ textarea {
   z-index: 5;
 }
 
+/* 预设/巡游按钮压在三维画面上，而画面已改白底：原来的 ghost 样式（浅灰字 + 透明底）
+   在白底上对比度不足，这里给半透明白底 + 深色字，任何机位下都能读 */
+.viewport__overlay-top .btn {
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(71, 86, 106, 0.35);
+  color: #253243;
+}
+
+.viewport__overlay-top .btn:hover {
+  background: #fff;
+  border-color: #47566a;
+  color: #101a26;
+}
+
+/* 视口覆盖层：背景已改白底（作者 2026-11-25），浅色文字在白上看不清，
+   这两处与右上角预设按钮统一改成深色字 + 半透明白底 */
 .viewport__fps {
   position: absolute;
   bottom: var(--sp-2);
   right: var(--sp-3);
   font-size: 11px;
-  color: var(--text-muted);
+  color: #47566a;
   font-variant-numeric: tabular-nums;
   z-index: 5;
 }
@@ -593,7 +610,7 @@ textarea {
   bottom: var(--sp-2);
   left: var(--sp-3);
   font-size: 11px;
-  color: var(--text-muted);
+  color: #47566a;
   z-index: 5;
 }
 

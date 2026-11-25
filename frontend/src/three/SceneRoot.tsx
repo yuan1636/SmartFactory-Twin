@@ -16,8 +16,9 @@ import { CAMERA_PRESETS, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORD
 import { createLabelRenderer } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
-import { createPostFx, FOG, POSTFX, type PostFx } from './postfx';
+import { createPostFx, POSTFX, type PostFx } from './postfx';
 import { LINE_SCENARIOS, overriddenState, scenarioBadgeText } from './scenario';
+import { SKY_COLOR, SKY_INTENSITY, hexToInt, makeSkyTexture } from './sky';
 
 export interface SceneStats {
   /** 整链总 draw call（场景 + 所有后处理 pass），D1 起验收按这个数算 */
@@ -124,26 +125,6 @@ const DUR_ENTRANCE = 3000;
 const DUR_SETCAM = 600;
 const TOUR_INTERVAL_MS = 6000; // 巡游每 6 秒换一个机位（规格 D3）
 
-/** 512×512 竖向渐变背景（作者 2026-11-25 指定）：顶部 #0a0f16 → 中部 #16202c → 底部 #0d1319 */
-function makeBackgroundTexture(): THREE.CanvasTexture {
-  const size = 512;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('无法创建 canvas 2d 上下文，背景渐变生成失败');
-  const grad = ctx.createLinearGradient(0, 0, 0, size);
-  grad.addColorStop(0, '#0a0f16');
-  grad.addColorStop(0.5, '#16202c');
-  grad.addColorStop(1, '#0d1319');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  // 贴图必须标 sRGB，否则渐变会被当线性值二次编码，整体发灰
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
   { selectedDeviceId = null, onSelectDevice, showFps = true },
   ref,
@@ -182,13 +163,14 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     if (!host) return;
 
     const scene = new THREE.Scene();
-    // 背景改成 512×512 竖向渐变贴图（作者 2026-11-25）：纯色背景在仰视/俯视时像一块平涂的板，
-    // 渐变给出"天光方向"，远景淡出也更自然。
-    // 贴图背景**不受雾影响**（three 的固有行为），远处物体仍按 FOG 淡出——
-    // 雾色取渐变中段色 0x16202c，所以淡出终点与背景中段一致，不会出现横向接缝。
-    const backgroundTexture = makeBackgroundTexture();
+    // 背景：纯白贴图 + backgroundIntensity 推到 HDR（作者 2026-11-25「背景换成白色」）。
+    // 不用 scene.background = new THREE.Color(0xffffff)：Color 走 clearColor 会被夹在 [0,1]，
+    // 过 ACES 后屏幕上只有 #d1d1d1（浅灰）。理由与实测值见 sky.ts。
+    const backgroundTexture = makeSkyTexture();
     scene.background = backgroundTexture;
-    scene.fog = new THREE.Fog(FOG.color, FOG.near, FOG.far);
+    scene.backgroundIntensity = SKY_INTENSITY;
+    // 雾已移除（作者要求「不要迷雾」）：远景不再淡出，靠白底与阴影拉开层次。
+    scene.fog = null;
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 400);
     const preset = CAMERA_PRESETS.overview;
@@ -199,8 +181,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // 清屏色与页面 CSS 背景统一到背景渐变的最底部色，画布边缘/首帧不会露白
-    renderer.setClearColor(0x0d1319, 1);
+    // 清屏色=白：背景贴图始终在，清屏色只在贴图拆掉的那一帧可见，与画布保持一致避免闪一下
+    renderer.setClearColor(hexToInt(SKY_COLOR), 1);
     // ACESFilmic 必须在加 Bloom 之前设：NoToneMapping 下高光会被直接截断成纯白块
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = POSTFX.exposure;
