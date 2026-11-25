@@ -127,6 +127,43 @@ def test_scores_returns_monotonic_points(client):
     assert summary["max_score"] is not None and summary["max_score"] <= 1.0
 
 
+def test_scores_echoed_window_matches_queried_window(client):
+    """回显的窗口必须就是实际查询的窗口，否则「同窗重放」会差 1 行。
+
+    真实踩到的 bug（D-34）：响应体里的 start/end 走 `iso()`，按秒精度输出，
+    把请求里的微秒截掉了；而 SQL 仍用原始微秒精度查询。
+    结果是用回显值重放会多算边界上那一行（实测 976 vs 977），
+    验收脚本「页面点数与同窗重放一致」因此间歇失败（约 1/3 概率）。
+
+    这条测试锁死契约：无论请求带不带微秒，用回显值重放必须得到同一个 count。
+    """
+    lo, hi = _device_window()
+    # 故意带上微秒，模拟前端 toISOString() 的行为。
+    # 这里不能用 _iso()——它会按秒格式化，恰好把要测的微秒抹掉。
+    start = lo.replace(microsecond=437000)
+    end = hi.replace(microsecond=913000)
+
+    first = client.get(
+        f"{API}/ml/anomaly/scores",
+        params={"device_id": DEVICE, "start": start.isoformat(), "end": end.isoformat()},
+    )
+    assert first.status_code == 200, first.text
+    body = first.json()
+
+    # 回显必须是整秒，且不带微秒残留
+    assert "." not in body["start"], f"回显起点不该带小数秒：{body['start']}"
+    assert "." not in body["end"], f"回显终点不该带小数秒：{body['end']}"
+
+    replay = client.get(
+        f"{API}/ml/anomaly/scores",
+        params={"device_id": DEVICE, "start": body["start"], "end": body["end"]},
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["count"] == body["count"], (
+        "用回显窗口重放得到了不同的点数——回显的窗口与查询的窗口不是同一个"
+    )
+
+
 def test_scores_downsample_keeps_peaks(client):
     """6 小时窗口应触发降采样，且降采样后的最大分数不低于原始最大值太多。
 

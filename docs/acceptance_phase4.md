@@ -1,11 +1,15 @@
 # 第 4 阶段验收记录
 
 ```yaml
-规格: docs/spec_phase4.md v1.1（v1.0 冻结版 + 4.2 批施工细节，含偏差 D-11 ~ D-25）
+规格: docs/spec_phase4.md v2.0（2026-11-25 重规划版，含偏差 D-11 ~ D-36）
 记录: 2026-11-24 ~ 2026-11-25，按批记录，每批三列（结论 / 命令 / 实际输出）
 范围: 4.1 批（异常检测：回填 → 数据集 → 四模型 → 报告，第 1~7 节）
       4.2 批（模型接入后端 + /ml/* 接口 + AI 页落地，第 8 节）
+      4.3 批（TimescaleDB 迁移）+ 4.4 批（压缩与查询对比实验），第 9 节
 ```
+
+> 第 9 节的前两批（4.1 / 4.2）是按 v1.0 / v1.1 施工的，规格在 2026-11-25 重规划为 v2.0，
+> 但**已完成部分以实现为准**（v2.0 §1.3 已记录这一原则）。本文件不做追溯性改写。
 
 ## 0. 本文件怎么用
 
@@ -652,3 +656,275 @@ node scripts\shot.mjs output\shot_ai_model.png --full
 
 > `output/` 与 `artifacts/` 都在 `.gitignore` 里：前者是本地验收证据（截图、DOM 快照、日志），
 > 后者是可由 `ml/` 下脚本重建的模型产物（体积大）。克隆仓库后这两处需要自己跑一遍才会出现。
+
+---
+
+# 第 9 节：4.3 批（TimescaleDB 迁移）+ 4.4 批（压缩与查询对比）
+
+## 9.0 本批要证明什么
+
+只有三句话：
+
+1. **换掉存储引擎不丢一行数据**，且原有功能全部照常（回归全过）；
+2. **迁移是可回滚的**——备份在、回滚路径演过、失败判据明确；
+3. **压缩带来多少空间收益、多少查询收益，用同一组查询在三个状态下实测出来**，而不是引用"业界通常"。
+
+## 9.1 交付物
+
+| 文件 | 内容 |
+|---|---|
+| `docker-compose.yml` | 镜像 `postgres:16` → `timescale/timescaledb:2.17.2-pg16`（版本锁死） |
+| `database/migrate_timescale.sql` | 迁移脚本，可重复执行（`IF NOT EXISTS` / `IF EXISTS` / `create_hypertable(if_not_exists)`） |
+| `backup/pre_timescale.dump` | 迁移前全库备份，78,476,537 字节（**不进 git**） |
+| `backup/bench_final5.sql` / `backup/parse_bench.py` | 五查询测量脚本与解析器（不进 git） |
+| `app/services/ml_anomaly.py` | 修 D-34：窗口边界归整到整秒 |
+| `frontend/src/pages/AiInsight.tsx` | 修 D-36：分数曲线窗口终点后退 5 秒 |
+| `tests/test_ml_api.py` | 新增回归测试 `test_scores_echoed_window_matches_queried_window` |
+
+## 9.2 迁移过程（含一次失败与修法）
+
+**① 迁移前基线**（先停模拟器，否则行数一直在变）
+
+```text
+行数 4,570,704 | 11-17 13:25:06 ~ 11-25 02:50:10
+总量 1001 MB = 表 446 MB + 索引 555 MB
+```
+
+**② 备份**
+
+```text
+pg_dump -Fc → backup/pre_timescale.dump
+78,476,537 字节 | TOC Entries: 98 | Compression: gzip | Dump Version: 1.15-0
+pg_restore -l 能正常列出 TOC（证明备份不是坏文件）
+```
+
+**③ 拉镜像与换镜像**
+
+```text
+docker pull timescale/timescaledb:2.17.2-pg16   耗时 8 分 59 秒
+镜像内 PostgreSQL 16.6 / timescaledb 2.17.2（扩展已 installed，无需手工 CREATE EXTENSION）
+```
+
+**④ 重建库 → 建表 → 恢复数据（第一次恢复失败，值得记下）**
+
+第一次用 `--data-only` 恢复，**报 8 个外键错误**：
+
+```text
+pg_restore: error: COPY failed for table "devices": violates foreign key constraint "fk_devices_workshop"
+DETAIL:  Key (workshop_id)=(WS-A) is not present in table "workshops".
+...（devices / production_lines / production_orders / maintenance_records / device_telemetry 均如此）
+pg_restore: warning: errors ignored on restore: 8
+```
+
+原因：`--data-only` 的 COPY 顺序不按外键依赖排，父表还没进数据，子表就开始了。
+结果只有 `workshops`(2) 与 `model_versions`(1) 进库，其余全是 0 行。
+
+**修法**：`TRUNCATE` 全部表后，改用 `--disable-triggers`（`sf` 是超级用户）：
+
+```powershell
+docker exec -i sftwin-db pg_restore -U sf -d smartfactory --data-only --no-owner --no-privileges --disable-triggers < backup/pre_timescale.dump
+```
+
+```text
+耗时 42.08 秒，退出码 0，无任何 error
+```
+
+**⑤ 执行迁移脚本**
+
+```text
+NOTICE:  migrating data to chunks
+       create_hypertable
+-------------------------------
+ (1,public,device_telemetry,t)
+ALTER TABLE
+ANALYZE
+ hypertable_name  | num_chunks | compression_enabled
+------------------+------------+---------------------
+ device_telemetry |          9 | t
+耗时 2 分 3.998 秒
+```
+
+## 9.3 迁移后四查（实际输出）
+
+```text
+① 行数 4,570,704 | 11-17 13:25:06 ~ 11-25 02:50:10     ← 与迁移前完全一致，差异 0
+② device_telemetry | 9 chunks                          ← 跨 9 个 UTC 日历日
+③ 逐设备最近 1 小时：14 行，1687 ~ 1739 点/台           ← 模拟器启停导致不足 1800
+④ 约束：pkey 已删；uq_telemetry_device_ts(u) / fk_telemetry_device(f) / 5 个 CHECK 均保留
+```
+
+> **② 后来变成 10 个 chunk**，多出来的是 `range_start = 2020-03-01` 的空 chunk（0 行）。
+> 原因：`test_over_5000_points_is_downsampled` 用固定时间戳 2020-03-01 造 5100 个点验证降采样，
+> `purge` fixture 删了行但 TimescaleDB 不会因为 chunk 空了就回收它（D-37）。
+> 所以"chunk 数"这个数只在**跑 pytest 之前**等于 9，之后是 10。判断存储是否正常时按这个规矩看。
+
+**幂等路径验证**（这是最容易被换库破坏的东西）：拿一条**已存在**的 `(device_id, ts)` 重发
+
+```text
+{"accepted":0,"duplicated":1,"rejected":0,"elapsed_ms":9}
+```
+
+`duplicated: 1` 说明 `ON CONFLICT (device_id, ts) DO NOTHING` 在 hypertable 上照常工作。
+这条路径是模拟器与 `--backfill-days` 都依赖的，一旦坏了会静默重复写入。
+
+**压缩块可写性验证**（推翻原规格的判断，见 D-30）：往已压缩的 `_hyper_1_5_chunk`（`is_compressed=t`）插入一行
+
+```text
+INSERT 0 1
+插入后可见 = 1
+DELETE 1
+```
+
+三条都成功。所以"压缩块不可写"是错的，TS 2.17 支持对压缩块做 DML；真正的代价是性能。
+
+## 9.4 压缩实验
+
+**四口径体积**
+
+| 状态 | 表 | 索引 | toast | 总量 |
+|---|---|---|---|---|
+| 普通表（迁移前） | 446 MB | 555 MB | ~0 | 1,001 MB |
+| hypertable 未压缩 | 444 MB | 486 MB | 0 | 930 MB |
+| **hypertable 压缩后** | **67 MB** | **72 MB** | **94 MB** | **234 MB** |
+
+压缩比：**表口径 6.63:1**、索引口径 6.75:1、**总量口径 3.97:1**；与迁移前相比 4.28:1。
+
+两个容易说错的地方，按实测改：
+
+- **迁移本身（未压缩）就把 1,001 → 930 MB**（-7%），原因是重建消除了堆与索引的膨胀。这部分**不算压缩收益**，所以压缩比的分母用 930。
+- **索引也一起被压小了**（486 → 72 MB）。"索引不参与压缩"在 TimescaleDB 上是错的，因为压缩块重建了更小的索引。
+
+逐块明细（压缩后）：
+
+```text
+_hyper_1_24 2020-03-01  ~0 MB  t   ← 空 chunk，pytest 留下的（D-37），无数据
+_hyper_1_4  11-17   6.8 MB  t
+_hyper_1_3  11-18    15 MB  t
+_hyper_1_6  11-19    15 MB  t
+_hyper_1_5  11-20    15 MB  t
+_hyper_1_7  11-21    15 MB  t
+_hyper_1_8  11-22    15 MB  t
+_hyper_1_2  11-23    15 MB  t
+_hyper_1_1  11-24   123 MB  f   ← 最近 1 天，不压
+_hyper_1_9  11-25    15 MB  f   ← 当前块，不压
+```
+
+**三态耗时**（协议：五个查询全部包一层 `count(*)` 只计服务端；窗口锚定 `2026-11-25 02:50:10+00`；
+状态切换后先跑一轮丢弃，再跑 10 次取中位数）
+
+| 查询 | 普通表 | hypertable 未压缩 | hypertable 压缩 | 压缩 vs 普通表 |
+|---|---|---|---|---|
+| Q1 单设备 1 小时明细 | 0.449 ms | 0.669 ms | 0.669 ms | +49%（+0.22 ms，可忽略） |
+| Q2 全厂 1 小时均温 | 3.377 ms | 4.018 ms | 3.958 ms | +17%（+0.58 ms） |
+| Q3 单设备 24 小时按分钟聚合 | 5.613 ms | 5.024 ms | 4.835 ms | **-14%** |
+| Q4 全表按小时计数 | 96.774 ms | 92.928 ms | 66.525 ms | **-31%** |
+| Q5 冷数据单设备一天（压缩块） | 6.084 ms | 5.937 ms | 3.227 ms | **-47%** |
+
+每个查询的极差（10 次）：Q1 32% / Q2 16% / Q3 20% / Q4 8.7% / Q5 28.9%（压缩态）；
+未压缩态 Q4 极差 27.7%；普通表 Q4 极差 9.8%。原始时间值见 `backup/final_*.txt`。
+
+## 9.5 结论（一句话）
+
+> 456 万行遥测在普通表占 1,001 MB，转 hypertable 并压缩后占 234 MB（**总量 3.97:1，表口径 6.63:1**）；
+> 扫描类查询明显变快（全表聚合 96.8 → 66.5 ms，冷数据单设备 6.08 → 3.23 ms），
+> 点查类查询无变化（单设备 1 小时 0.45 → 0.67 ms，差值 0.2 ms 量级）。
+
+**不要写成"性能全面提升"**：点查是略慢的，只是慢得可以忽略。
+
+## 9.6 无回归
+
+```text
+node scripts/acceptance-batch2.mjs   24 / 24
+node scripts/acceptance-motion.mjs   17 / 17
+node scripts/acceptance-ai.mjs       42 / 42，连跑 3 次全过
+python -m pytest tests -q            25 passed（24 + 新增 1 条回归）
+```
+
+压缩态下另做了应用级验证：接口从压缩块读整天数据
+
+```text
+GET /devices/CNC-01/telemetry?start=2026-11-20T00:00:00Z&end=2026-11-20T23:59:59Z
+HTTP 200，75.6 ms，4800 点，范围 00:00:00 ~ 23:59:42，样本温度 59.1
+```
+
+## 9.7 本批发现并修复的问题
+
+### ① `/ml/anomaly/scores` 回显的窗口不是它查询的窗口（D-34，真 bug）
+
+**现象**：`acceptance-ai.mjs` 的「分数曲线点数与同窗重放一致」约 **1/3 概率**失败，差 1 个点：
+
+```text
+FAIL  6.2 分数曲线点数与同窗重放一致  · 页面「944」/ 接口「945」
+FAIL  6.2 分数曲线点数与同窗重放一致  · 页面「976」/ 接口「977」
+```
+
+**定位过程**（三步排除）：
+
+1. 先怀疑活数据源竞态 → 给页面窗口终点加 5 秒后退，**仍然失败**；
+2. 用日志里那个固定窗口连查 3 次接口 → `977 / 977 / 977`，**接口本身是确定的**，排除数据漂移；
+3. 对比"带毫秒"与"整秒"两种窗口 → 同一个时刻，`end=03:25:58.437` 返回 **976**，`end=03:25:58.000` 返回 **977**。
+
+**根因**：响应体的 `start/end` 走 `app/utils.py::iso()`，它用 `timespec="seconds"` **截掉微秒**；
+而 SQL 用请求里的原始微秒精度查询。于是**回显值重放时会向下取整 `start`，把边界上那一行多算进来**。
+前端 `toISOString()` 必然带毫秒，所以这个 bug 每次都会出现，只是落在采样点边界上才看得出来（约 1/3 概率）。
+
+**修法**：`score_window()` 开头把两端归整到整秒，让"查的"和"回显的"是同一个窗口：
+
+```python
+start = start.astimezone(UTC).replace(microsecond=0)
+end = end.astimezone(UTC).replace(microsecond=0)
+```
+
+**回归测试**：新增 `test_scores_echoed_window_matches_queried_window`。
+验证过它真的能抓 bug——把修复注释掉后，该用例 `1 failed`；恢复后 `25 passed`。
+
+### ② 前端窗口终点后退 5 秒（D-36）
+
+即使修好了回显，窗口终点若取"当前时刻"，最后一行的提交时刻（实测滞后 3~30 ms）仍可能落在页面请求之后。
+后退 5 秒让窗口落在已落库的数据上，同窗重放才稳定。代价是曲线末端少 5 秒，肉眼看不出。
+
+### ③ 测量协议本身出过错（D-35，教训最大的一条）
+
+第一版测量得出的结论是"压缩后全表扫描反而慢 5~10%"。按同一状态重复测量后发现，这个结论是**假象**，三个原因：
+
+| 问题 | 后果 | 修法 |
+|---|---|---|
+| 查询没有包 `count(*)`，结果行回传给客户端 | Q4 返回 180 行、Q3 返回 1440 行，**客户端格式化时间主导了计时** | 全部包一层 `count(*)`，只计服务端 |
+| 状态切换（压缩/解压）后立刻测 | 第一轮被 IO 尾流污染，同一状态两轮相差 **51%** | 切换后等 15 秒，先跑一轮丢弃 |
+| Q1~Q3 窗口都在最新未压缩块 | 根本碰不到压缩块，测不出压缩的任何影响 | 新增 Q5（固定查已压缩的 11-20 全天） |
+
+修正后三态数据自洽，"压缩让扫描更快"这个方向才站得住。
+
+### ④ 其余规格判断被实测推翻（D-26 ~ D-33）
+
+| 偏差 | 原判断 | 实测 |
+|---|---|---|
+| D-26 | dump 预期 > 100 MB | 78 MB |
+| D-27 | 用 `pg_total_relation_size` 量 hypertable | 只量到父表 **24 kB**（真实 930 MB），必须用 `hypertable_detailed_size` |
+| D-28 | 索引不参与压缩、压缩后几乎不变 | 486 → **72 MB**（也压了 6.75 倍） |
+| D-29 | 三口径（表/索引/总量） | 压缩态 **toast 占 94 MB**，须四个口径 |
+| D-30 | 压缩块不可写 | **可写**（TS 2.17 支持 DML） |
+| D-31 | 四个查询即可 | Q1~Q3 不触及压缩块，须加 Q5；Q4 须测两遍 |
+| D-32 | 预估 8 个 chunk | 实测 **9**（跨 9 个 UTC 日历日） |
+| D-33 | 压缩比按迁移前总量算 | 迁移本身已降 7%（消除膨胀），分母须用 930 |
+
+## 9.8 本批未做 / 未验证
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 压缩的后台 job（`add_compression_policy`） | **未做**（§8 第 16 条明确不做） | 本阶段手工压缩；自动化后若压到正在回填的块，排查成本高于手工 |
+| 7 天压缩边界在真实回填下的表现 | **未验证** | 本批回填深度为 0；"回填跨压缩边界"的实际代价没有样本 |
+| 保留策略（`add_retention_policy`） | **未做** | 属数据治理，不在本阶段范围 |
+| `timescaledb.compress_chunk_time_interval` | **未做** | 默认按 chunk 区间，无特殊需求 |
+| 24 小时窗口的页面手感 | **未测真机**（人工项，§5.8 第 2 项） | 无头环境软渲染，帧率与手感测不出 |
+| 迁移耗时在更大数据量下的推算 | **未做** | 456 万行 2 分 4 秒；线性外推不可靠（chunk 搬迁有固定开销），不做承诺 |
+
+## 9.9 人工检查（§5.8 第 1、2 项的实际结论）
+
+| # | 检查项 | 结论 | 依据 |
+|---|---|---|---|
+| 1 | 压缩前后耗时的可比性 | **可信** | 最终一轮五个查询的极差 8.7% ~ 28.9%，均 < 30%。中间曾出现 51% 的异常轮次，已按 D-35 加"丢弃轮"消除 |
+| 2 | 压缩后 24 小时窗口的页面手感 | **未测**（人工项仍未做） | 只测了接口耗时：1 小时 19 ms / 6 小时 78 ms / 24 小时 74 ms（24 小时返回 4,800 点 / 588 KB）。接口侧没有变慢的迹象，但"切换后多久出图"依赖浏览器渲染，无头环境给不出可信数字。**上表不得据接口数据推断页面手感** |
+
+> 第 2 项不结案，留在人工项里。答辩前应在有显示器的环境上手动切一次 1h / 6h / 24h 并记一笔。
+> 这一条宁可空着，也不拿接口耗时冒充页面手感——两者不是一回事。

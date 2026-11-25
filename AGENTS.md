@@ -31,13 +31,13 @@
 | `docs/acceptance_phase2.md` | 第 2 阶段验收回归记录（7.1～7.16 逐条结论 + 命令 + 实际输出） | 已完成：14 通过 / 0 不通过 / 1 未验证（7.15 真 Ctrl+C 待人工按一次） |
 | `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v1.1 生效**（v1.0 于 2026-11-24 冻结；同日增补 §6.7 产线运行动画），是第 3 阶段唯一施工依据 |
 | `docs/acceptance_phase3.md` | 第 3 阶段验收记录（Batch 1 / Batch 2 / 第 3 批产线运行动画） | 10.1 八条与动画 17 项全过；Batch 2 的 24 项复跑仍全过；保留人工项：动效观感、真实帧率、滚筒停转样本 |
-| `docs/spec_phase4.md` | 第 4 阶段实现规格（数据处理流水线 + AI 模型 + 页面接入） | **v1.1 生效**（v1.0 于 2026-11-24 冻结，G 组九项作者确认"按建议执行"）；施工顺序 C 先 A 后；偏差 D-11～D-25 记录在 §15 |
-| `docs/acceptance_phase4.md` | 第 4 阶段验收记录（按批） | 4.1 批（训练）与 **4.2 批（后端接入 + AI 页）** 均已完成：42 项页面断言 + 24 项后端用例全过；4.3～4.5 批未开始 |
+| `docs/spec_phase4.md` | 第 4 阶段实现规格（数据处理流水线 + AI 模型 + 时序库） | **v2.0 生效**（2026-11-25 按作者六项决策重规划：Kafka 不接 / TimescaleDB 接 / D、E 块降级）；偏差 D-11 ~ D-36；v1.0 与 v1.1 归档在 `docs/archive/` |
+| `docs/acceptance_phase4.md` | 第 4 阶段验收记录（按批） | 4.1（训练）、4.2（后端 + AI 页）、**4.3（TimescaleDB 迁移）、4.4（压缩与查询对比）** 已完成；4.5~4.7 未开始 |
 | `ml/` | 第 4 阶段 AI 模型（common 公共件 + anomaly_detection） | 异常检测主模型 PR-AUC 0.9859 / Recall 0.9830 / Precision 0.9063（测试集 127,206 行，时间切分最后 15%）；三分类归因宏 F1 1.0（数据集事实，非泛化能力） |
-| `requirements-ml.txt` | ml 依赖（与 `requirements.txt` 分开） | 5 个直接依赖版本写死；间接带 scipy / threadpoolctl（偏差 D-11） |
+| `requirements-ml.txt` | ml 依赖（与 `requirements.txt` 分开） | 4 个直接依赖版本写死（**已删 `kafka-python`**）；间接带 scipy / threadpoolctl（偏差 D-11） |
 | `frontend/` | 前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | 五个可用页齐全 + 三维产线运行动画 + AI 页模型输出区；`npm run test` **86 passed** |
 | `scripts/` | `start-all.ps1`（一键起库/后端/模拟器/前端）、`acceptance-batch2.mjs`（CDP 页面级 24 项）、`acceptance-motion.mjs`（产线动画 17 项）、`acceptance-ai.mjs`（AI 页 42 项）、`shot.mjs`（截当前页）、`lib/cdp.mjs`（共用 CDP 底座） | 五者均已实测跑通 |
-| `tests/` | 测试网（pytest + httpx，24 个用例：`test_phase2_api.py` / `test_ml_api.py`） | **24 passed**；依赖在 `requirements-dev.txt`，不进 `requirements.txt`；**跑之前先停 uvicorn**（两进程抢写告警表会让冷却用例随机失败） |
+| `tests/` | 测试网（pytest + httpx，25 个用例：`test_phase2_api.py` / `test_ml_api.py`） | **25 passed**；依赖在 `requirements-dev.txt`，不进 `requirements.txt`；**跑之前先停 uvicorn**（两进程抢写告警表会让冷却用例随机失败） |
 
 **读文档顺序**：本文件 → `docs/方案.md` → 当前阶段的 `docs/spec_phaseX.md`。规格未定的部分不许自行发挥，先回来问。
 
@@ -71,7 +71,7 @@
   交付物：`app/`（18 节接口 + 告警扫描/收敛 + WebSocket）、`data_pipeline/`（模拟器 4 参数 + 三类注入 + 订单推进 + 回填）、
   `database/`（schema / seed / reset）、`config/devices.json`、`tests/`。
 - **第 3 阶段已完成并验收**（2026-11-24，三批）：Batch 1 工程骨架、数据层、三维场景、总览页、设备监控页；Batch 2 生产分析页、告警与维护页、AI 真值页、一键启动脚本；第 3 批三维产线运行动画。Batch 2 的 24 项与动画 17 项全过，记录见 `docs/acceptance_phase3.md`。
-- **当前阶段：第 4 阶段，4.1 与 4.2 两批已交付。**
+- **当前阶段：第 4 阶段，4.1 ~ 4.4 四批已交付（规格 v2.0）。**
   - **4.1 批（异常检测训练）**：回填 7 天（423 万行 / 921 MB）→ 78 维特征 → 84.8 万行训练集 → 四模型对比。
     主模型 XGBoost PR-AUC 0.9859 / Recall 0.9830 / 误报 0.625 次每设备每小时，对比阈值规则基线 0.9098 / 0.8028 / 0.045；
     随机切分对照虚高 +0.0123（泄漏幅度已量化）。`evaluate.py` 的 22 项报告自检全过，其中"时间不重叠"断言抓到一个真 bug（D-17）。
@@ -79,11 +79,20 @@
     `app/routers/ml.py` 三个接口、`model_versions` 与 `anomaly_scores` 两张表、AI 页模型输出区（指标卡 / 混淆矩阵 / 四模型对比 / 分数曲线）、
     `scripts/acceptance-ai.mjs` 42 项断言。三套验收合计 **24 + 42 + 17 全过**，前端 86 用例、后端 24 用例通过。
     红线：**AI 页上每个数字都能追到 `/ml/*` 的一次真实返回**，不许有写死指标。
-- 第 4 阶段剩余：4.3 TimescaleDB、4.4 Kafka、4.5 故障风险与产量预测。见 `docs/spec_phase4.md` §12。
+- 第 4 阶段剩余：4.5 Kafka 可行性测算与决策记录（只产出 `docs/decision_kafka.md`）、4.6 D 块可行性 + 演示级指示、4.7 E 块产量预测与基线对比。
+- **4.3 / 4.4 批（TimescaleDB）已完成**（2026-11-25）：镜像换 `timescale/timescaledb:2.17.2-pg16`，`device_telemetry` 转 hypertable（9 个 chunk），
+  迁移前后 **4,570,704 行完全一致**，幂等路径（`ON CONFLICT`）验证通过，三条页面验收与 25 项 pytest 无回归。
+  压缩后体积 1,001 MB → **234 MB**（总量口径 3.97:1，表口径 6.63:1）；**查询收益分类型**：扫描类 -31% ~ -47%，点查类基本不变。
+  施工中抓到一个**接口真 bug**（D-34）：`/ml/anomaly/scores` 回显的窗口被 `iso()` 截到整秒而 SQL 用原始微秒查询，
+  导致"同窗重放"差 1 行（约 1/3 概率），已修并补回归测试（撤掉修复后该测试确实失败）。
 - **作者 2026-11-24 的后续要求已登记**：①「三维产线要能动起来」→ 已实现（§6.7，17 项断言全过）；②「模型太粗糙」→ 作者确认**按计划留到第 6 阶段「优化与展示」**，`factory_models/` 继续为空占位，任何提前引入 GLB 的动作都属超范围。
 - 第 3 阶段实施中产生的偏差已写入 `docs/spec_phase3.md` 第 12 节：**D-04** REST 改走 Vite `/api` 代理（后端无 CORS，直连必失败）；**D-05** dev 角标显示 draw call（便于脚本验收 10.1.6）；**D-06** 时间窗改用 `isoWindow()` 单次取时（否则 24h 窗口会因多出几毫秒被判 `RANGE_TOO_LARGE`）；**D-07** 4 个 DTO 按实机响应重写；**D-08** `__sceneDebug.camera()`（仅 dev，供脚本验缓动与不钻地）；**D-09** 增补 §6.7 产线运行动画（视觉动画不属于第 12 节禁止的物理仿真）；**D-10** `__sceneDebug.lineMotion()` / `deviceStates()`（仅 dev，供脚本断言闸门、队列与冻结）。
 - 第 3 阶段验收后仍保留两条人工判断项：动效观感（RUNNING 呼吸 / ALARM 闪烁是否刺眼）、真实帧率（无头环境是软渲染，不作结论）。
-- 第 4 阶段 4.2 批实施中产生的偏差已写入 `docs/spec_phase4.md` 第 15 节：**D-18/D-19** artifact 是推理唯一真相源、数据库表只存历史（反过来会出现"表说模型 A、实际跑模型 B"）；**D-20** heatmap 强制 visualMap（缺了渲染期抛异常、整页白屏）；**D-21** 分数曲线不加 `areaStyle`（会盖住真值色块与散点）；**D-22** 推理预热窗往 start 前多取 300 秒再裁掉（否则开头分数系统性偏低）；**D-23** 告警游标回退 30 秒（`inserted_at` 是事务开始时间，单点游标会永久跳过并发后提交的记录）；**D-24** 验收脚本按内容而非索引定位、等值到位再断言；**D-25** 注入值与目标设备匹配且只注入一台。
+- 第 4 阶段 4.2 批实施中产生的偏差已写入 `docs/spec_phase4.md` **附录 B**：**D-18/D-19** artifact 是推理唯一真相源、数据库表只存历史（反过来会出现"表说模型 A、实际跑模型 B"）；**D-20** heatmap 强制 visualMap（缺了渲染期抛异常、整页白屏）；**D-21** 分数曲线不加 `areaStyle`（会盖住真值色块与散点）；**D-22** 推理预热窗往 start 前多取 300 秒再裁掉（否则开头分数系统性偏低）；**D-23** 告警游标回退 30 秒（`inserted_at` 是事务开始时间，单点游标会永久跳过并发后提交的记录）；**D-24** 验收脚本按内容而非索引定位、等值到位再断言；**D-25** 注入值与目标设备匹配且只注入一台。
+- **4.3 / 4.4 批的偏差 D-26 ~ D-36 同样在附录 B**。其中三条是**规格判断被实测推翻**，不记下来以后一定会再错一次：
+  **D-27** hypertable 的 `pg_total_relation_size` 只量父表（24 kB，真实 930 MB），必须用 `hypertable_detailed_size`；
+  **D-28** 压缩会把索引一起压小（486 → 72 MB），"索引不参与压缩"是错的；**D-30** 压缩块**可写**（TS 2.17 支持 DML）。
+  **D-35** 记录了测量协议本身出过的错：查询不包 `count(*)` 时客户端格式化主导计时，据此得出的"压缩后全表扫描变慢"是假象，已作废。
 - **`docs/spec_phase4.md` v0.1 草案已由作者确认 G 组九项并升 v1.0 冻结**，4.2 批后升 v1.1；后续批次按第 12 节顺序施工。
 - 已裁定并写入 `docs/spec_phase2.md`（v1.1 冻结）的决策：采样 2 秒、新增 `workshops` / `production_lines` / `anomaly_injection` 三张表、第 2 阶段不启用 TimescaleDB、不做认证、告警 5 分钟冷却与 G-10 解除规则、`--backfill-days` 冷启动参数。实现与规格冲突时以规格为准。
 - **7.10 与 7.14 的口径问题已在 v1.1 修正**（7.10 判定区间改为 `604800 ≤ 总数 ≤ 604900`；7.14 补「7.12 注入后 45 秒内执行」前置）。代码零改动。

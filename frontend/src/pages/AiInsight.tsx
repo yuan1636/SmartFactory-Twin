@@ -30,7 +30,7 @@ import { ErrorState } from '../components/ErrorState';
 import { RangePicker } from '../components/RangePicker';
 import type { RangeKey } from '../hooks/useDeviceTelemetry';
 import { usePolling } from '../hooks/usePolling';
-import { apiGet, isoWindow } from '../services/api';
+import { apiGet } from '../services/api';
 import { formatNumber, formatPercent, formatTime } from '../services/format';
 import type {
   AlarmItem,
@@ -45,6 +45,8 @@ import { anomalyVsAlarm, buildGantt, paramsText } from '../utils/analytics';
 
 const PAGE_SIZE = 100;
 const RANGE_HOURS: Record<RangeKey, number> = { '1h': 1, '6h': 6, '24h': 24 };
+// 分数曲线窗口终点相对当前时刻的后退量。理由见 fetcher 处注释（活数据源的右边界竞态）。
+const SCORE_WINDOW_SETTLE_MS = 5_000;
 
 /** 四个指标卡的定义。value 一律从 ModelInfo.metrics 取，这里不写任何指标常量。 */
 function metricCards(info: ModelInfo) {
@@ -108,13 +110,18 @@ export default function AiInsight() {
 
   // 推理要 200ms~2s，轮询间隔给 120 秒。窗口在 fetcher 里现算，
   // 否则页面开久了以后曲线会永远停在上次渲染的那一小时。
+  //
+  // 终点后退 5 秒再取数：模拟器每 2 秒写一批、时间戳还略有滞后，若把"当前时刻"
+  // 当窗口终点，最新几个采样点会在页面请求之后、验收脚本重放之前才落库，
+  // 于是页面点数比同窗重放少 1 个（实测 944 vs 945，约 1/3 概率复现）。
+  // 后退 5 秒让窗口落在已经落库的数据上，同窗重放才可复现。
   const scores = usePolling<ScorePayload>(
     () => {
-      const window = isoWindow(RANGE_HOURS[range]);
+      const endMs = Date.now() - SCORE_WINDOW_SETTLE_MS;
       return apiGet<ScorePayload>('/ml/anomaly/scores', {
         device_id: deviceId,
-        start: window.start,
-        end: window.end,
+        start: new Date(endMs - RANGE_HOURS[range] * 3600 * 1000).toISOString(),
+        end: new Date(endMs).toISOString(),
       });
     },
     120_000,

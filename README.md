@@ -3,9 +3,10 @@
 以虚拟机械加工工厂为场景（1 工厂 / 2 车间 / 4 生产线 / 14 台设备）的数字孪生演示系统。
 **第一版全部数据为模拟数据，不得对外表述为真实工厂数据。**
 
-本仓库当前处于 **第 4 阶段 4.2 批已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 推理），
+本仓库当前处于 **第 4 阶段 4.4 批已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 推理），
 **三维产线会随设备状态真实运行**（物料流动、闸门阻挡排队、滚筒转动、机器人摆动），
-**AI 异常检测已接入页面**（模型指标 / 混淆矩阵 / 四模型对比 / 分数曲线全部来自 `/ml/*` 实时返回，页面无写死数字），附一键启动脚本。
+**AI 异常检测已接入页面**（模型指标 / 混淆矩阵 / 四模型对比 / 分数曲线全部来自 `/ml/*` 实时返回，页面无写死数字），
+**遥测表已迁到 TimescaleDB 并启用压缩**（456 万行：普通表 1,001 MB → hypertable 压缩后 234 MB），附一键启动脚本。
 
 ## 当前进度
 
@@ -14,10 +15,10 @@
 | 第 1 阶段 | 业务底座与文档（方案、架构、数据模型、设备清单） | 已完成，见 `docs/方案.md` |
 | 第 2 阶段 | 模拟器 + REST API + WebSocket 推送 + 告警判定 + 生产订单推进 | 已完成，见 `docs/spec_phase2.md`、`docs/acceptance_phase2.md` |
 | 第 3 阶段 | React + TypeScript + Three.js + ECharts 前端 | 已完成并验收（5 个可用页；10.1 八条 + 10.2 十二项；产线运行动画 17 项） |
-| **第 4 阶段** | **数据处理流水线 + AI 模型 + 页面接入** | **进行中：4.1（异常检测训练）与 4.2（后端接入 + AI 页）已完成**，4.3 TimescaleDB / 4.4 Kafka / 4.5 故障风险与产量预测未开始 |
+| **第 4 阶段** | **数据处理流水线 + AI 模型 + 页面接入 + 时序库** | **进行中：4.1（异常检测）4.2（后端接入 + AI 页）4.3（TimescaleDB 迁移）4.4（压缩与查询对比）已完成**，4.5 Kafka 决策记录 / 4.6 故障风险 / 4.7 产量预测未开始 |
 
 - 第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.1 已冻结**，v1.1 在 v1.0 上增补 §6.7 产线运行动画），验收记录见 `docs/acceptance_phase3.md`。
-- 第 4 阶段的施工依据是 `docs/spec_phase4.md`（**v1.1 生效**，v1.0 于 2026-11-24 冻结，v1.1 补充 D-18～D-25 共 8 条实施偏差），验收记录见 `docs/acceptance_phase4.md` 第 8 节。
+- 第 4 阶段的施工依据是 `docs/spec_phase4.md`（**v2.0 生效**，2026-11-25 按作者六项决策重规划：Kafka 不接、TimescaleDB 接、D/E 块降级为可行性评估 + 基线对比；v1.0 与 v1.1 原文归档在 `docs/archive/`），验收记录见 `docs/acceptance_phase4.md` 第 8、9 节。
 
 ## 目录结构
 
@@ -28,6 +29,7 @@ docs/spec_phase2.md          第 2 阶段实现规格（v1.1 冻结）
 docs/spec_phase4.md          第 4 阶段实现规格（v1.1 生效，含偏差 D-11～D-25）
 config/devices.json          14 台设备清单 + 正常区间 + 告警阈值 + 注入参数（唯一来源）
 database/schema.sql          建表脚本（10 表 / 15 索引，只建不删，可重复执行）
+database/migrate_timescale.sql  device_telemetry → hypertable + 压缩设置（可重复执行）
 database/seed.sql            种子数据（2 车间 / 4 产线 / 14 设备）
 database/reset.sql           清库重建（⚠️ 会清空全部数据）
 database/reset_drop_only.sql 只删除表（配合分步重建）
@@ -69,7 +71,7 @@ ml/                          第 4 阶段 AI 模型
   anomaly_detection/         训练 / 评估 / 二分类 + 三分类归因
     register_model.py        把 artifact 登记进 model_versions（同 task 只保留一行生效）
     score_window.py          批量打分并写入 anomaly_scores（复用 app 的 score_window）
-tests/                       pytest（24 个用例：test_phase2_api.py / test_ml_api.py）
+tests/                       pytest（25 个用例：test_phase2_api.py / test_ml_api.py）
 factory_models/              预留，第 6 阶段三维资产（当前为空占位）
 ```
 
@@ -92,7 +94,10 @@ powershell -ExecutionPolicy Bypass -File scripts\start-all.ps1
 
 三个服务窗口请保持打开。8000 已被占用时会跳过后端启动（避免端口冲突），此时沿用已有进程。
 
-### 1. 启动数据库（PostgreSQL 16，宿主机端口 5433）
+### 1. 启动数据库（TimescaleDB 2.17.2 / PostgreSQL 16，宿主机端口 5433）
+
+> 第 4 阶段 4.3 批把镜像从 `postgres:16` 换成了 `timescale/timescaledb:2.17.2-pg16`。
+> `postgres:16` 官方镜像不含 timescaledb 扩展，`CREATE EXTENSION` 会直接报错。
 
 ```powershell
 docker compose up -d
@@ -236,7 +241,7 @@ node scripts\acceptance-ai.mjs
 python -m pytest tests -q
 ```
 
-预期：`24 passed`。其中 `tests/test_ml_api.py` 11 个函数 / 14 个用例，含三条降级用例
+预期：`25 passed`。其中 `tests/test_ml_api.py` 12 个函数 / 15 个用例（含 3 条降级用例与 1 条窗口回显回归）
 （`ml_enabled=False`、schema 哈希不匹配、artifact 目录缺失），每条都断言"接口仍 200、`loaded=false`、
 另两个接口返回 503 `ML_UNAVAILABLE`"。
 
@@ -246,6 +251,36 @@ python -m pytest tests -q
 python -m ml.anomaly_detection.register_model            # 登记 artifact → model_versions（1 行生效版本）
 python -m ml.anomaly_detection.score_window --hours 168  # 批量打分 → anomaly_scores（默认 1 小时）
 ```
+
+### 第 4 阶段 4.3 / 4.4 批（TimescaleDB 迁移与压缩，已完成）
+
+完整记录见 **`docs/acceptance_phase4.md` 第 9 节**。要证明的三件事：换存储引擎不丢数据、迁移可回滚、
+压缩的收益用同一组查询在三态实测出来。
+
+```powershell
+# 迁移（详见 docs/spec_phase4.md §5.3，共六步：基线 → 备份 → 换镜像 → 建表恢复 → 迁移 → 四查 + 回归）
+Get-Content database\migrate_timescale.sql | docker exec -i sftwin-db psql -U sf -d smartfactory
+
+# 体积四口径（注意用 hypertable_detailed_size，不是 pg_*）
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT pg_size_pretty(table_bytes) AS 表, pg_size_pretty(index_bytes) AS 索引, pg_size_pretty(toast_bytes) AS toast, pg_size_pretty(total_bytes) AS 总量 FROM hypertable_detailed_size('device_telemetry');"
+
+# 压缩（只压 1 天前的块，压缩块可写但重写代价高）
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT count(*) FROM (SELECT compress_chunk(c) FROM show_chunks('device_telemetry', older_than => INTERVAL '1 day') c) t;"
+```
+
+实测（4,570,704 行 / 1.55 GB 环境）：
+
+| 状态 | 表 | 索引 | toast | 总量 |
+|---|---|---|---|---|
+| 普通表（迁移前） | 446 MB | 555 MB | ~0 | 1,001 MB |
+| hypertable 未压缩 | 444 MB | 486 MB | 0 | 930 MB |
+| **hypertable 压缩后** | **67 MB** | **72 MB** | **94 MB** | **234 MB** |
+
+压缩比：表口径 **6.63:1**、总量口径 **3.97:1**。查询侧按类型看（10 次取中位数）：
+扫描类变快（全表聚合 96.8 → 66.5 ms，冷数据单设备 6.08 → 3.23 ms），点查类基本不变
+（单设备 1 小时 0.45 → 0.67 ms，差 0.2 ms 量级）。**不要写成"性能全面提升"**。
+
+迁移后三条页面验收 24/24、17/17、42/42，后端 25 passed。
 
 ### 第 3 阶段（已完成）
 
@@ -303,7 +338,7 @@ pip install -r requirements-dev.txt
 python -m pytest tests -v
 ```
 
-预期：`24 passed`（`test_phase2_api.py` 10 个函数 / 10 个用例 + `test_ml_api.py` 11 个函数 / 14 个用例）。
+预期：`25 passed`（`test_phase2_api.py` 10 个函数 / 10 个用例 + `test_ml_api.py` 12 个函数 / 15 个用例）。
 
 > ⚠️ **跑 pytest 前必须停掉 uvicorn**。用例会写告警表验证冷却逻辑，后端同时在扫同一张表，
 > 两个进程交替插入会让 `assert 2 == 1` 随机出现——这不是代码 bug，是测试环境问题。
@@ -345,7 +380,7 @@ python -m pytest tests -v
 | 渲染开销 | 132 draw calls / 11,066 triangles（预算 150，新增 10 个来自物料与滚筒） |
 | 产线闸门 | 4 条产线 × 3 台设备，闸门坐标全部落在色带内，带宽可容 8 个料位 |
 | 停机实测 | WS 断开后 `paused=true`，两次采样物料位置完全一致，恢复后自动续跑 |
-| 后端回归 | `pytest` **24 passed** |
+| 后端回归 | `pytest` **25 passed** |
 
 第 4 阶段 4.2 批实测（2026-11-24，三个接口现场调用；前两项的值来自 artifact，稳定可复现；
 `scores` 的数字随模拟器写入而变，下表是某一次调用的值）：

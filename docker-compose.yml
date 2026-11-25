@@ -1,7 +1,9 @@
 # 只用容器跑数据库；应用本身跑本地虚拟环境（见 docs/spec_phase2.md G-15）
 services:
   db:
-    image: postgres:16
+    # 第 4 阶段 4.3 批换镜像：postgres:16 官方镜像不含 timescaledb 扩展
+    # 版本锁死，不用 latest（见 docs/spec_phase4.md G-05 / §6.1）
+    image: timescale/timescaledb:2.17.2-pg16
     container_name: sftwin-db
     environment:
       POSTGRES_DB: smartfactory

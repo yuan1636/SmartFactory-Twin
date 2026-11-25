@@ -428,7 +428,15 @@ def score_window(device_id: str, start: datetime, end: datetime, limit: int) -> 
 
     为什么实时算而不是查缓存表：页面上的曲线必须反映"当前模型 + 当前数据"。
     缓存表（`anomaly_scores`）是离线存档，两者职责不同，见 schema.sql 的注释。
+
+    **窗口边界先归整到整秒**：响应体里的 start/end 走 `iso()`，它按 `timespec="seconds"` 输出，
+    会把微秒截掉。如果查询用原始微秒精度，就会出现"回显的窗口"与"实际查询的窗口"不是同一个，
+    拿回显值重放会多算或少算边界上的那一行（实测 976 vs 977）。
+    这里先归整再查，保证「回显的就是查过的」。
     """
+    start = start.astimezone(UTC).replace(microsecond=0)
+    end = end.astimezone(UTC).replace(microsecond=0)
+
     state = get_state()
     if not state.loaded:
         raise ApiError(
