@@ -146,9 +146,124 @@ const CNC_PARTS: DevicePart[] = [
   part({ kind: 'warningStripe', shape: 'box', color: DETAIL_COLORS.amber, x: 0, y: 0.36, z: 1.28, sx: 3.6, sy: 0.07, sz: 0.03 }),
 ];
 
-/** 当前已启用的部件表。R2 只放 CNC，R3 再补齐其余五类。 */
-export const DEVICE_PARTS: Partial<Record<DevicePartKey, DevicePart[]>> = {
+/** 机械臂枢轴的局部高度。部件表里 arm:true 的坐标都相对这个点，builders.ts 建组时用它 */
+export const ARM_PIVOT_Y = 1.95;
+
+/** 各类型的状态灯高度：与旧版逐类型写死的 lampY 一致，改了会让灯浮在机身上方或陷进去 */
+export const DETAIL_LAMP_Y: Record<DevicePartKey, number> = {
+  CNC: 2.9,
+  ROBOT: 2.35,
+  CONVEYOR: 1.05,
+  INSPECTION: 2.05,
+  AIR: 2.3,
+  PUMP: 1.7,
+};
+
+/** 工业机器人：底座法兰 + 腰/肩关节 + 分节手臂 + 两指夹爪。臂部件坐标相对 ARM_PIVOT_Y */
+const ROBOT_PARTS: DevicePart[] = [
+  part({ kind: 'contactShadow', shape: 'shadow', color: DETAIL_COLORS.shadowCenter, x: 0, y: 0.012, z: 0, sx: 2.1, sy: 0, sz: 1.7 }),
+  part({ kind: 'baseFlange', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: 0, y: 0.07, z: 0, sx: 1.1, sy: 0.14, sz: 1.1, segments: 20 }),
+  ...repeat(4, (i) => part({
+    kind: 'baseBolt', shape: 'cyl', color: DETAIL_COLORS.metal,
+    x: i < 2 ? -0.42 : 0.42, y: 0.17, z: i % 2 ? -0.42 : 0.42, sx: 0.1, sy: 0.08, sz: 0.1, segments: 8,
+  })),
+  part({ kind: 'pedestal', shape: 'round', color: DETAIL_COLORS.robot, x: 0, y: 0.72, z: 0, sx: 0.72, sy: 1.15, sz: 0.72, radius: 0.08 }),
+  part({ kind: 'waistJoint', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: 0, y: 1.35, z: 0, sx: 0.78, sy: 0.22, sz: 0.78, segments: 16 }),
+  part({ kind: 'shoulderHousing', shape: 'round', color: DETAIL_COLORS.robot, x: 0, y: 1.7, z: 0, sx: 0.9, sy: 0.5, sz: 0.8, radius: 0.08 }),
+  part({ kind: 'cableBundle', shape: 'cyl', color: DETAIL_COLORS.frame, x: -0.4, y: 1.3, z: -0.2, sx: 0.12, sy: 0.8, sz: 0.12, segments: 8, rotZ: 0.3 }),
+  part({ kind: 'namePlate', shape: 'box', color: DETAIL_COLORS.plate, x: 0, y: 0.5, z: 0.38, sx: 0.3, sy: 0.12, sz: 0.02 }),
+  // ---- 以下挂在枢轴组，随 motion.ts 摆动（坐标相对 pivot，不是相对地面）----
+  part({ kind: 'upperArm', shape: 'round', color: DETAIL_COLORS.robot, x: 0.65, y: 0, z: 0, sx: 1.3, sy: 0.3, sz: 0.32, radius: 0.06, arm: true }),
+  part({ kind: 'elbowJoint', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: 1.3, y: 0, z: 0, sx: 0.36, sy: 0.34, sz: 0.36, segments: 14, rotZ: Math.PI / 2, arm: true }),
+  part({ kind: 'forearm', shape: 'round', color: DETAIL_COLORS.robot, x: 1.55, y: -0.12, z: 0, sx: 0.62, sy: 0.24, sz: 0.26, radius: 0.05, arm: true }),
+  part({ kind: 'wrist', shape: 'cyl', color: DETAIL_COLORS.metal, x: 1.88, y: -0.2, z: 0, sx: 0.24, sy: 0.2, sz: 0.24, segments: 12, rotZ: Math.PI / 2, arm: true }),
+  part({ kind: 'gripperPalm', shape: 'box', color: DETAIL_COLORS.metalDark, x: 2.02, y: -0.26, z: 0, sx: 0.18, sy: 0.3, sz: 0.3, arm: true }),
+  ...repeat(2, (i) => part({
+    kind: 'gripperFinger', shape: 'box', color: DETAIL_COLORS.metal,
+    x: 2.2, y: -0.26, z: i ? 0.11 : -0.11, sx: 0.24, sy: 0.08, sz: 0.08, arm: true,
+  })),
+];
+
+/** 输送机：主梁 + 双侧护板 + 支腿 + 端头驱动罩。滚筒/定位条仍是 InstancedMesh（动画要用），不入部件表 */
+const CONVEYOR_PARTS: DevicePart[] = [
+  part({ kind: 'contactShadow', shape: 'shadow', color: DETAIL_COLORS.shadowCenter, x: 0, y: 0.012, z: 0, sx: 10.2, sy: 0, sz: 1.5 }),
+  part({ kind: 'frame', shape: 'round', color: DETAIL_COLORS.conveyor, x: 0, y: 0.55, z: 0, sx: 10.0, sy: 0.3, sz: 1.0, radius: 0.05 }),
+  ...repeat(2, (i) => part({
+    kind: 'sideRail', shape: 'box', color: DETAIL_COLORS.metalDark,
+    x: 0, y: 0.78, z: i ? 0.55 : -0.55, sx: 9.9, sy: 0.26, sz: 0.07,
+  })),
+  ...repeat(6, (i) => part({
+    kind: 'leg', shape: 'box', color: DETAIL_COLORS.frame,
+    x: -4.5 + i * 1.8, y: 0.25, z: 0, sx: 0.12, sy: 0.5, sz: 0.9,
+  })),
+  ...repeat(6, (i) => part({
+    kind: 'footPad', shape: 'box', color: DETAIL_COLORS.metalDark,
+    x: -4.5 + i * 1.8, y: 0.025, z: 0, sx: 0.26, sy: 0.05, sz: 1.0,
+  })),
+  part({ kind: 'driveHousing', shape: 'round', color: DETAIL_COLORS.metalDark, x: 4.45, y: 0.5, z: 0, sx: 0.85, sy: 0.6, sz: 1.0, radius: 0.06 }),
+  part({ kind: 'drivePulley', shape: 'cyl', color: DETAIL_COLORS.metal, x: 4.45, y: 0.62, z: 0, sx: 0.36, sy: 0.8, sz: 0.36, segments: 14, rotZ: Math.PI / 2 }),
+  part({ kind: 'tensioner', shape: 'box', color: DETAIL_COLORS.frame, x: -4.7, y: 0.6, z: 0, sx: 0.3, sy: 0.3, sz: 0.8 }),
+  part({ kind: 'namePlate', shape: 'box', color: DETAIL_COLORS.plate, x: 0, y: 0.6, z: 0.58, sx: 0.5, sy: 0.16, sz: 0.02 }),
+  part({ kind: 'warningStripe', shape: 'box', color: DETAIL_COLORS.amber, x: 0, y: 0.4, z: 0.58, sx: 9.4, sy: 0.06, sz: 0.03 }),
+];
+
+/** 检测台：台体 + 龙门架 + 相机头/镜头 + 环形光源 + 控制箱 */
+const INSPECTION_PARTS: DevicePart[] = [
+  part({ kind: 'contactShadow', shape: 'shadow', color: DETAIL_COLORS.shadowCenter, x: 0, y: 0.012, z: 0, sx: 3.3, sy: 0, sz: 2.3 }),
+  part({ kind: 'tableBase', shape: 'round', color: DETAIL_COLORS.inspection, x: 0, y: 0.36, z: 0, sx: 3.0, sy: 0.72, sz: 2.0, radius: 0.07 }),
+  part({ kind: 'tableTop', shape: 'round', color: DETAIL_COLORS.metal, x: 0, y: 0.77, z: 0, sx: 3.02, sy: 0.1, sz: 2.02, radius: 0.03 }),
+  ...repeat(2, (i) => part({
+    kind: 'gantryColumn', shape: 'box', color: DETAIL_COLORS.metalDark,
+    x: i ? 1.2 : -1.2, y: 1.3, z: 0, sx: 0.16, sy: 1.0, sz: 0.16,
+  })),
+  part({ kind: 'gantryBeam', shape: 'box', color: DETAIL_COLORS.metalDark, x: 0, y: 1.72, z: 0, sx: 2.6, sy: 0.16, sz: 0.16 }),
+  part({ kind: 'cameraHead', shape: 'round', color: DETAIL_COLORS.frame, x: 0, y: 1.5, z: 0, sx: 0.3, sy: 0.35, sz: 0.3, radius: 0.04 }),
+  part({ kind: 'lens', shape: 'cyl', color: DETAIL_COLORS.glass, x: 0, y: 1.28, z: 0, sx: 0.18, sy: 0.12, sz: 0.18, segments: 14 }),
+  part({ kind: 'lightRing', shape: 'cyl', color: DETAIL_COLORS.plate, x: 0, y: 1.2, z: 0, sx: 0.5, sy: 0.04, sz: 0.5, segments: 20 }),
+  part({ kind: 'controlBox', shape: 'round', color: DETAIL_COLORS.frame, x: 1.05, y: 1.15, z: 0.75, sx: 0.5, sy: 0.4, sz: 0.25, radius: 0.03 }),
+  part({ kind: 'screen', shape: 'box', color: DETAIL_COLORS.screen, x: 1.05, y: 1.2, z: 0.9, sx: 0.38, sy: 0.24, sz: 0.02 }),
+  part({ kind: 'namePlate', shape: 'box', color: DETAIL_COLORS.plate, x: -1.05, y: 0.5, z: 1.01, sx: 0.4, sy: 0.12, sz: 0.02 }),
+];
+
+/** 空压机：卧式电机 + 立式储气罐 + 风扇罩 + 冷却器 + 法兰与压力表 */
+const AIR_PARTS: DevicePart[] = [
+  part({ kind: 'contactShadow', shape: 'shadow', color: DETAIL_COLORS.shadowCenter, x: 0, y: 0.012, z: 0, sx: 2.7, sy: 0, sz: 1.9 }),
+  part({ kind: 'skid', shape: 'round', color: DETAIL_COLORS.frame, x: 0, y: 0.1, z: 0, sx: 2.3, sy: 0.2, sz: 1.5, radius: 0.04 }),
+  part({ kind: 'tank', shape: 'cyl', color: DETAIL_COLORS.aux, x: -0.35, y: 0.85, z: 0, sx: 1.1, sy: 1.3, sz: 1.1, segments: 20 }),
+  part({ kind: 'tankCap', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: -0.35, y: 1.53, z: 0, sx: 1.15, sy: 0.1, sz: 1.15, segments: 20 }),
+  part({ kind: 'motor', shape: 'cyl', color: DETAIL_COLORS.shellDark, x: 0.6, y: 1.2, z: 0, sx: 0.7, sy: 0.9, sz: 0.7, segments: 16, rotZ: Math.PI / 2 }),
+  part({ kind: 'fanCover', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: 1.1, y: 1.2, z: 0, sx: 0.8, sy: 0.12, sz: 0.8, segments: 18, rotZ: Math.PI / 2 }),
+  part({ kind: 'cooler', shape: 'box', color: DETAIL_COLORS.frame, x: -0.35, y: 0.9, z: -0.72, sx: 0.9, sy: 0.5, sz: 0.12 }),
+  ...repeat(2, (i) => part({
+    kind: 'pipeFlange', shape: 'cyl', color: DETAIL_COLORS.metal,
+    x: -0.35, y: i ? 1.62 : 0.42, z: 0.55, sx: 0.3, sy: 0.08, sz: 0.3, segments: 12, rotX: Math.PI / 2,
+  })),
+  part({ kind: 'pressureGauge', shape: 'cyl', color: DETAIL_COLORS.plate, x: -0.35, y: 1.45, z: 0.58, sx: 0.22, sy: 0.06, sz: 0.22, segments: 12, rotX: Math.PI / 2 }),
+  part({ kind: 'namePlate', shape: 'box', color: DETAIL_COLORS.plate, x: 0.6, y: 0.5, z: 0.76, sx: 0.4, sy: 0.14, sz: 0.02 }),
+];
+
+/** 水泵：蜗壳 + 卧式电机 + 联轴器 + 进出法兰 + 压力表 */
+const PUMP_PARTS: DevicePart[] = [
+  part({ kind: 'contactShadow', shape: 'shadow', color: DETAIL_COLORS.shadowCenter, x: 0, y: 0.012, z: 0, sx: 1.9, sy: 0, sz: 1.7 }),
+  part({ kind: 'skid', shape: 'round', color: DETAIL_COLORS.frame, x: 0, y: 0.09, z: 0, sx: 1.5, sy: 0.18, sz: 1.3, radius: 0.04 }),
+  part({ kind: 'volute', shape: 'cyl', color: DETAIL_COLORS.aux, x: -0.25, y: 0.65, z: 0, sx: 1.1, sy: 0.5, sz: 1.1, segments: 22, rotZ: Math.PI / 2 }),
+  part({ kind: 'motor', shape: 'cyl', color: DETAIL_COLORS.shellDark, x: 0.5, y: 0.7, z: 0, sx: 0.6, sy: 0.6, sz: 0.6, segments: 16, rotZ: Math.PI / 2 }),
+  part({ kind: 'coupling', shape: 'cyl', color: DETAIL_COLORS.metal, x: 0.13, y: 0.7, z: 0, sx: 0.24, sy: 0.2, sz: 0.24, segments: 12, rotZ: Math.PI / 2 }),
+  part({ kind: 'inletFlange', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: -0.25, y: 1.2, z: 0, sx: 0.4, sy: 0.08, sz: 0.4, segments: 14 }),
+  part({ kind: 'outletFlange', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: -0.25, y: 0.65, z: 0.6, sx: 0.35, sy: 0.08, sz: 0.35, segments: 14, rotX: Math.PI / 2 }),
+  part({ kind: 'pipeStub', shape: 'cyl', color: DETAIL_COLORS.metalDark, x: -0.25, y: 0.65, z: 0.45, sx: 0.22, sy: 0.4, sz: 0.22, segments: 12, rotX: Math.PI / 2 }),
+  part({ kind: 'pressureGauge', shape: 'cyl', color: DETAIL_COLORS.plate, x: 0.5, y: 1.05, z: 0.3, sx: 0.2, sy: 0.05, sz: 0.2, segments: 12, rotX: Math.PI / 2 }),
+  part({ kind: 'namePlate', shape: 'box', color: DETAIL_COLORS.plate, x: 0.5, y: 0.35, z: 0.66, sx: 0.3, sy: 0.12, sz: 0.02 }),
+];
+
+/** 全部六类已启用（R3）：partKeyOf 不再返回 null，旧版盒子堆叠分支随之删除 */
+export const DEVICE_PARTS: Record<DevicePartKey, DevicePart[]> = {
   CNC: CNC_PARTS,
+  ROBOT: ROBOT_PARTS,
+  CONVEYOR: CONVEYOR_PARTS,
+  INSPECTION: INSPECTION_PARTS,
+  AIR: AIR_PARTS,
+  PUMP: PUMP_PARTS,
 };
 
 /** 由设备 ID 取部件表键；未启用的类型返回 null，调用方回退旧几何 */

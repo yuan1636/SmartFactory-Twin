@@ -63,6 +63,11 @@ const main = async () => {
     { name: '01b_side', desc: 'CNC-01 侧面/背面', position: [-37, 3.2, -1.5], target: [-31, 1.3, -7.5] },
     { name: '02_walk', desc: 'WALK 人眼机位', ...(byKey.WALK ?? { position: [-33, 1.68, -7.5], target: [-20, 1.4, -7.5] }) },
     { name: '03_overview', desc: '总览', ...(byKey.overview ?? { position: [0, 36, 46], target: [0, 0, 0] }) },
+    // 逐类近景：总览机位太远，认不出结构就只能靠这四张
+    { name: '04_robot', desc: 'ROB-01 关节与夹爪', position: [-21.5, 3.2, -3], target: [-25.5, 1.2, -7.5] },
+    { name: '05_conveyor', desc: 'CONV-01 支腿与滚筒', position: [-12.5, 3, -2.5], target: [-16, 0.8, -7.5] },
+    { name: '06_inspection', desc: 'INSP-01 龙门检测台', position: [25, 3.4, -3], target: [21, 1, -7.5] },
+    { name: '07_aux', desc: 'AIR-01 / PUMP-01 动力站', position: [0, 4, 28], target: [0, 1, 22] },
   ];
 
   for (const pose of poses) {

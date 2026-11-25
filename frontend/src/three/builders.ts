@@ -24,7 +24,7 @@ import {
 } from './layout';
 import { createMaterials, disposeMaterials, RING_BRIGHTNESS, type SceneMaterials } from './materials';
 import { buildProps } from './propBuilder';
-import { buildDeviceDetail, partKeyOf, type DevicePartKey } from './deviceDetail';
+import { ARM_PIVOT_Y, DETAIL_LAMP_Y, buildDeviceDetail, partKeyOf, type DevicePartKey } from './deviceDetail';
 
 export interface DeviceVisual {
   group: THREE.Group;
@@ -198,69 +198,41 @@ export function buildFactory(): FactoryBuild {
     group.name = `device:${deviceId}`;
     group.userData.deviceId = deviceId;
 
-    const add = (
-      geo: THREE.BufferGeometry,
-      x: number,
-      y: number,
-      z: number,
-      rotZ = 0,
-      parent: THREE.Group = group,
-    ) => {
-      const mesh = new THREE.Mesh(track(geo), mat);
-      mesh.position.set(x, y, z);
-      mesh.rotation.z = rotZ;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.userData.deviceId = deviceId;
-      parent.add(mesh);
-      return mesh;
-    };
-
-    // ---------- 设备建模 v2（D 批 R2）：先把已启用部件表的类型换成合并几何 ----------
-    // 十几个部件按顶点色并成一份几何，只占 1 个 mesh（旧版是 3~5 个 Box 各占 1 次）。
-    // 机身不随状态染色（applyDeviceState 只改灯/环与标签），所以合并材质不破坏工况表达；
+    // ---------- 设备建模 v2（D 批 R2/R3）：全部六类都走部件表 ----------
+    // 十几到二十几类部件按顶点色合并成一份几何，只占 1 个 mesh；旧版是 3~5 个 Box 各占 1 次。
+    // 机身不随状态染色（applyDeviceState 只改灯/环与标签），合并材质不破坏工况表达；
     // userData.deviceId 仍挂在 mesh 上，D3 的 14/14 点击拾取不受影响。
+    // 旧版逐类型的盒子堆叠分支已删除——留着会出现两套几何定义，改了一边忘了另一边。
     const detailKey = partKeyOf(deviceId);
-    if (detailKey) {
-      const detail = buildDeviceDetail(detailKey);
-      const shell = new THREE.Mesh(track(detail.staticGeometry), materials.deviceShell);
-      shell.name = `device-shell:${deviceId}`;
-      shell.castShadow = true;
-      shell.receiveShadow = true;
-      shell.userData.deviceId = deviceId;
-      group.add(shell);
-      deviceDetails.push({
-        id: deviceId,
-        key: detailKey,
-        parts: detail.partKinds.length,
-        triangles: detail.triangleCount,
-        meshes: detail.meshCount,
-      });
-      return { group, lampY: 2.9 };
-    }
+    if (!detailKey) return null;
+    const detail = buildDeviceDetail(detailKey);
 
-    let lampY: number;
+    const shell = new THREE.Mesh(track(detail.staticGeometry), materials.deviceShell);
+    shell.name = `device-shell:${deviceId}`;
+    shell.castShadow = true;
+    shell.receiveShadow = true;
+    shell.userData.deviceId = deviceId;
+    group.add(shell);
+    let meshCount = 1;
 
-    if (type === 'CNC') {
-      add(new THREE.BoxGeometry(4.0, 2.2, 2.6), 0, 1.1, 0);
-      add(new THREE.BoxGeometry(1.0, 0.6, 1.0), 0.6, 2.5, 0);
-      add(new THREE.BoxGeometry(1.6, 1.4, 0.08), -0.9, 1.3, 1.32);
-      lampY = 2.9;
-    } else if (type === 'ROBOT') {
-      add(new THREE.CylinderGeometry(0.6, 0.6, 0.35, 24), 0, 0.175, 0);
-      add(new THREE.BoxGeometry(0.34, 1.6, 0.34), 0, 1.15, 0);
-      // 大臂与夹爪套在枢轴组里：转组的 y 轴就是"机器人摆动"，几何一点不用改
+    // 机械臂：部件表里 arm:true 的部分挂在枢轴组，转组 y 轴就是 motion.ts 的摆动
+    if (detail.armGeometry) {
       const pivot = new THREE.Group();
       pivot.name = `arm:${deviceId}`;
-      pivot.position.set(0, 1.95, 0);
+      pivot.position.set(0, ARM_PIVOT_Y, 0);
+      const armMesh = new THREE.Mesh(track(detail.armGeometry), materials.deviceShell);
+      armMesh.name = `device-arm:${deviceId}`;
+      armMesh.castShadow = true;
+      armMesh.receiveShadow = true;
+      armMesh.userData.deviceId = deviceId;
+      pivot.add(armMesh);
       group.add(pivot);
-      add(new THREE.BoxGeometry(1.4, 0.3, 0.3), 0.7, 0, 0, 0, pivot);
-      add(new THREE.BoxGeometry(0.32, 0.36, 0.32), 1.4, -0.23, 0, 0, pivot);
       arms.set(deviceId, pivot);
-      lampY = 2.35;
-    } else if (type === 'CONVEYOR') {
-      add(new THREE.BoxGeometry(10.0, 0.7, 1.2), 0, 0.35, 0);
-      // 8 个滚筒用 InstancedMesh：既符合"8 个滚筒"，又只占 1 个 draw call
+      meshCount += 1;
+    }
+
+    // 输送机滚筒与定位条：动画每帧写实例矩阵，不能并进静态几何，必须保留原接口
+    if (type === 'CONVEYOR') {
       const rollerGeo = track(new THREE.CylinderGeometry(0.18, 0.18, 1.2, 14));
       rollerGeo.rotateX(Math.PI / 2);
       const rollerMesh = new THREE.InstancedMesh(rollerGeo, mat, 8);
@@ -276,7 +248,6 @@ export function buildFactory(): FactoryBuild {
       rollerMesh.userData.deviceId = deviceId;
       group.add(rollerMesh);
 
-      // 光滑圆柱自转是看不出来的，配一条绕轴转的暗色定位条才有"在转"的观感
       const markGeo = track(new THREE.BoxGeometry(0.07, 0.07, 1.14));
       const markMesh = new THREE.InstancedMesh(markGeo, materials.rollerMark, 8);
       for (let i = 0; i < 8; i += 1) {
@@ -288,26 +259,17 @@ export function buildFactory(): FactoryBuild {
       group.add(markMesh);
 
       rollers.set(deviceId, { rollers: rollerMesh, marks: markMesh, xs, y: 0.82, radius: 0.13 });
-      lampY = 1.05;
-    } else if (type === 'INSPECTION') {
-      add(new THREE.BoxGeometry(3.0, 0.8, 2.0), 0, 0.4, 0);
-      add(new THREE.BoxGeometry(0.16, 1.0, 0.16), -1.2, 1.3, 0);
-      add(new THREE.BoxGeometry(0.16, 1.0, 0.16), 1.2, 1.3, 0);
-      add(new THREE.BoxGeometry(2.6, 0.16, 0.16), 0, 1.72, 0);
-      add(new THREE.BoxGeometry(0.3, 0.35, 0.3), 0, 1.5, 0);
-      lampY = 2.05;
-    } else if (deviceId.startsWith('PUMP')) {
-      add(new THREE.BoxGeometry(1.6, 0.3, 1.4), 0, 0.15, 0);
-      add(new THREE.CylinderGeometry(0.7, 0.7, 1.6, 22), 0, 0.85, 0, Math.PI / 2);
-      lampY = 1.7;
-    } else {
-      add(new THREE.BoxGeometry(2.4, 2.0, 1.6), 0, 1.0, 0);
-      const fan = new THREE.CylinderGeometry(0.5, 0.5, 0.06, 24);
-      add(fan, 0, 2.03, 0);
-      lampY = 2.3;
+      meshCount += 2;
     }
 
-    return { group, lampY };
+    deviceDetails.push({
+      id: deviceId,
+      key: detailKey,
+      parts: detail.partKinds.length,
+      triangles: detail.triangleCount,
+      meshes: meshCount,
+    });
+    return { group, lampY: DETAIL_LAMP_Y[detailKey] };
   };
 
   const addOutline = (group: THREE.Group, deviceId: string) => {
