@@ -43,6 +43,15 @@ export function setLabelActive(label: CSS2DObject, active: boolean): void {
   label.element.classList.toggle('is-active', active);
 }
 
+/**
+ * 设备名牌的显示开关（纯三维展示页，作者 2026-11-25 指定）：默认隐藏，悬停/选中才显示。
+ * 用 class 而不是直接改 style.display——CSS2DRenderer 每帧会覆写 display，
+ * 只有 opacity/visibility 能存活。
+ */
+export function setLabelShown(label: CSS2DObject, shown: boolean): void {
+  label.element.classList.toggle('is-shown', shown);
+}
+
 export function createLabelRenderer(): CSS2DRenderer {
   const renderer = new CSS2DRenderer();
   renderer.domElement.style.position = 'absolute';

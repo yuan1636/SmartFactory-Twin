@@ -14,7 +14,7 @@ import type { EffectiveState } from '../utils/status';
 import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, type DeviceVisual } from './builders';
 import { cutawaySides } from './envInterior';
 import { CAMERA_PRESETS, DEFAULT_FOV, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
-import { createLabelRenderer } from './labels';
+import { createLabelRenderer, setLabelShown } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
 import { createPostFx, POSTFX, type PostFx } from './postfx';
@@ -68,6 +68,8 @@ declare global {
       deviceBoxes: () => Record<string, { min: [number, number, number]; max: [number, number, number] }>;
       /** D3：设备中心投影到屏幕的 CSS 像素坐标（逐台点击测命中率用） */
       deviceAnchors: () => Record<string, { x: number; y: number; behind: boolean }>;
+      /** 展示页：任意世界坐标投影到屏幕 CSS 像素（构图对称性自检用） */
+      projectPoint: (x: number, y: number, z: number) => { x: number; y: number; behind: boolean };
       /** D3：巡游状态（第几站、站名、是否在跑） */
       tour: () => { active: boolean; index: number; station: PresetKey };
       /** 产线运行动画快照：验收脚本用它确认物料在动、堵料时停在设备前、降级时冻结 */
@@ -290,6 +292,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       for (const [id, visual] of build.devices) {
         const active = id === hoveredId || id === selectedRef.current;
         setDeviceSelected(visual, active);
+        // 名牌默认隐藏，悬停或选中该设备时才显示（纯三维展示页，作者 2026-11-25 指定）
+        setLabelShown(visual.label, active);
       }
     };
     refreshHighlight();
@@ -772,6 +776,16 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
           }
           return out;
         },
+        /** R1.5/展示页：任意世界坐标投影到屏幕 CSS 像素（构图对称性自检用） */
+        projectPoint: (x: number, y: number, z: number) => {
+          const v = new THREE.Vector3(x, y, z).project(camera);
+          const r = renderer.domElement.getBoundingClientRect();
+          return {
+            x: Math.round(((v.x + 1) / 2) * r.width + r.left),
+            y: Math.round(((1 - v.y) / 2) * r.height + r.top),
+            behind: v.z > 1,
+          };
+        },
         /** D3：设备中心投影到屏幕的 CSS 像素坐标（逐台点击测命中率用） */
         deviceAnchors: () => {
           const rect = renderer.domElement.getBoundingClientRect();
@@ -875,7 +889,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         <span className="viewport__scenario-tag">三维演示工况</span>
         {scenarioBadgeText()}
       </div>
-      <div className="viewport__hint">左键拖拽旋转 · 滚轮缩放 · 点击设备看详情 · 键位 1~5 切视角 / R 复位 / P 巡游</div>
+      <div className="viewport__hint">左键拖拽旋转 · 滚轮缩放 · 点击设备看详情 · 键位 1~7 切视角 / R 复位 / P 巡游</div>
     </div>
   );
 });

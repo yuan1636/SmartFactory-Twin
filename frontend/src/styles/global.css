@@ -570,15 +570,6 @@ textarea {
   display: block;
 }
 
-.viewport__overlay-top {
-  position: absolute;
-  top: var(--sp-3);
-  right: var(--sp-3);
-  display: flex;
-  gap: var(--sp-2);
-  z-index: 5;
-}
-
 /* 预设/巡游按钮压在三维画面上，而画面已改白底：原来的 ghost 样式（浅灰字 + 透明底）
    在白底上对比度不足，这里给半透明白底 + 深色字，任何机位下都能读 */
 .viewport__overlay-top .btn {
@@ -705,39 +696,79 @@ textarea {
   border-radius: 2px;
 }
 
-/* ---------- 总览页 ---------- */
+/* ---------- 总览页（纯三维展示，作者 2026-11-25 指定）----------
+   原三栏网格（KPI 卡 + 画布 + 设备列表侧栏）整体删除；
+   现在画布铺满内容区，唯一的浮层是按需出现的设备详情卡。 */
 
-.overview {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: var(--sp-4);
+.overview--stage {
+  position: relative;
+  /* 抵消 .content 的内边距：画布高度 = 视口减顶栏，四周不留卡片边框 */
+  margin: calc(var(--sp-6) * -1);
+  height: calc(100% + var(--sp-6) * 2);
+  min-height: 480px;
+  overflow: hidden;
+  background: var(--bg-scene);
+}
+
+.overview--stage .viewport {
   height: 100%;
   min-height: 0;
+  border: none;
+  border-radius: 0;
 }
 
-.overview__kpis {
-  grid-column: 1 / 2;
-}
-
-.overview__viewport {
-  grid-column: 1 / 2;
-  min-height: 0;
+/* 右上角：状态文字（无背景框）在上，预设按钮行在下 */
+.viewport__overlay-top {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  z-index: 5;
+}
+
+.viewport__preset-row {
+  display: flex;
   gap: var(--sp-2);
 }
 
-.overview__side {
-  grid-column: 2 / 3;
-  grid-row: 1 / 3;
-  min-height: 0;
+/* 状态文字：一行纯文本，无卡片无背景框；白底下加轻微亮描边保证可读 */
+.stage-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+/* 按需详情卡：唯一的常驻浮层例外（点击设备才出现，浮在画布左下角）。
+   注意恢复 flex：页面下方 DeviceMonitor 的 .device-detail 把基类改成了 grid，
+   浮层卡沿用 Overview 的纵向布局必须显式改回，否则 metrics 被压成逐字换行 */
+.overview--stage .device-detail--float {
+  position: absolute;
+  left: var(--sp-3);
+  bottom: var(--sp-3);
+  z-index: 6;
+  width: 300px;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--r-card);
-  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(5, 10, 18, 0.22);
+}
+
+/* 设备名牌默认隐藏（作者：眼前只有工厂）；悬停/选中该设备时由 SceneRoot 加 is-shown */
+.device-label[data-device-label] {
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.device-label[data-device-label].is-shown {
+  visibility: visible;
+  opacity: 1;
 }
 
 .device-list {

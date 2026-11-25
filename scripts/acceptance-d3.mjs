@@ -3,11 +3,11 @@
  *
  * 六条主断言：
  *  ① 入场时长 3.0±0.2 s（读 lastTransitionMs——它记的是「实际」耗时，不是计划值）；
- *  ② 预设数量 = 5（overview / WS-A / WS-B / LINE-A1 / DEVICE）；
+ *  ② 预设数量 = 7（R1.5 起：overview / WALK / AISLE / WS-A / WS-B / LINE-A1 / DEVICE）；
  *  ③ 14 台设备点击命中 100%（投影坐标逐台真实点击，断言侧栏详情标题 = 设备号）；
  *  ④ 5 个预设两两切换 ≤1200 ms（20 个有序对全测）；
  *  ⑤ 切换过程不穿设备（每 50 ms 采相机位置，与设备包围盒求交）；
- *  ⑥ 巡游一圈不重复不跳位（5 站 + 回卷 = 6 站），鼠标点击立即退出。
+ *  ⑥ 巡游一圈不重复不跳位（7 站 + 回卷 = 8 站），鼠标点击立即退出。
  * 外加两条回归守卫：场景 draw call ≤100（D2 预算）与 fps 中位数 ≥50。
  *
  * 用法：node scripts/acceptance-d3.mjs
@@ -132,7 +132,7 @@ const main = async () => {
     camNow.position.map((n) => n.toFixed(1)).join(','));
 
   // ② 预设数量
-  check('预设数量 = 5', presets.length === 5 && PRESET_KEYS.every((k) => presets.some((p) => p.key === k)),
+  check('预设数量 = 7（R1.5 加 WALK/AISLE）', presets.length === 7 && PRESET_KEYS.every((k) => presets.some((p) => p.key === k)),
     presets.map((p) => p.key).join(' / '));
 
   // ③ 14 台点击命中：规格指定测「总览机位」。点击后相机会推近，所以每台都必须
@@ -229,7 +229,7 @@ const main = async () => {
   const stations = [];
   let cur = null;
   const t2 = Date.now();
-  while (Date.now() - t2 < 45000 && stations.length < 6) {
+  while (Date.now() - t2 < 60000 && stations.length < 8) {
     const tour = JSON.parse(await session.evaluate('JSON.stringify(window.__sceneDebug.tour())'));
     if (tour.active && tour.station !== cur) {
       cur = tour.station;
@@ -237,9 +237,10 @@ const main = async () => {
     }
     await sleep(400);
   }
-  const lap = ['overview', 'WS-A', 'WS-B', 'LINE-A1', 'DEVICE'];
-  const noRepeat = new Set(stations.slice(0, 5)).size === 5;
-  check('巡游一圈不重复不跳位', stations.length >= 6 && stations[5] === stations[0]
+  // R1.5：7 个预设一圈 + 回卷 = 8 站；TOUR_INTERVAL 6s × 7 = 42s，等待窗口放宽到 60s
+  const lap = ['overview', 'WALK', 'AISLE', 'WS-A', 'WS-B', 'LINE-A1', 'DEVICE'];
+  const noRepeat = new Set(stations.slice(0, 7)).size === 7;
+  check('巡游一圈不重复不跳位', stations.length >= 8 && stations[7] === stations[0]
     && lap.every((s, i) => stations[i] === s) && noRepeat,
     `${stations.length} 站: ${stations.join(' → ')}`);
   // 鼠标按下立即退出（演示时「镜头自己跑、拉不回来」是规格点名的风险）
