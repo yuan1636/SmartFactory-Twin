@@ -1,10 +1,10 @@
 /** 环境层与产线补齐件的几何约束：越界、扎设备、类别缺失，都在这里先暴露。 */
 import { describe, expect, it } from 'vitest';
 import { LINE_STRIPS } from './layout';
+import { INTERIOR_COLORS } from './envInterior';
 import {
   ATLAS_TEXT,
   ENV_BOUNDS,
-  ENV_COLORS,
   buildEnvironment,
   buildLineProps,
   buildStationLabels,
@@ -51,11 +51,8 @@ describe('环境层（本批）', () => {
     expect(env.kinds.length).toBeGreaterThanOrEqual(9);
   });
 
-  it('柱子 ≥ 20 根、桁架杆件 > 100、灯带 = 5 道（四条线 + 通道）', () => {
-    const columns = env.parts.filter((p) => p.color === ENV_COLORS.column && p.sy === 8);
-    // 实拍后中线柱从 3 根减到 1 根（z=±9 那两根会挡产线），每车间 10 + 1 = 11
-    expect(columns.length).toBeGreaterThanOrEqual(20);
-    expect(env.parts.filter((p) => p.color === ENV_COLORS.truss).length).toBeGreaterThan(100);
+  it('桁架杆件 > 100、灯带 = 5 道（四条线 + 通道）——柱子/桁架已由 envInterior 接管，见 envInterior.test.ts', () => {
+    expect(env.parts.filter((p) => p.color === INTERIOR_COLORS.truss).length).toBeGreaterThan(100);
     expect(env.parts.filter((p) => p.group === 'emissive').length).toBe(LINE_STRIPS.length + 1);
   });
 

@@ -1,6 +1,6 @@
 /** D3 相机预设约束：坐标写错最便宜的暴露方式是单元测试，不必起浏览器。 */
 import { describe, expect, it } from 'vitest';
-import { CAMERA_PRESETS, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose } from './cameraPresets';
+import { CAMERA_PRESETS, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose } from './cameraPresets';
 import { DEVICE_LAYOUT } from './layout';
 
 type Vec3 = [number, number, number];
@@ -39,5 +39,28 @@ describe('cameraPresets（D3）', () => {
     const p = ENTRANCE_START.position;
     expect(Math.abs(p[0]) > 40 || Math.abs(p[2]) > 30).toBe(true);
     expect(dist(p, ENTRANCE_START.target)).toBeLessThan(ORBIT_LIMITS.maxDistance);
+  });
+
+  // ---- D 批（车间室内化）新增约束 ----
+  it('D 批：轨道上限收到 72，总览机位退到 [0,36,46]', () => {
+    expect(ORBIT_LIMITS.maxDistance).toBe(72);
+    expect(CAMERA_PRESETS.overview.position).toEqual([0, 36, 46]);
+  });
+
+  it('D 批：入场终点参数 = 总览机位（否则入场停在 overview 旁边，验收的"终点位姿"会失败）', () => {
+    const [x, y, z] = CAMERA_PRESETS.overview.position;
+    expect(ENTRANCE_PATH.azimuth1).toBe(0);
+    expect(ENTRANCE_PATH.radius1).toBeCloseTo(Math.hypot(x, z), 6);
+    expect(ENTRANCE_PATH.height1).toBe(y);
+    // 终点按渲染用的球面公式回算，必须落回 overview
+    expect(Math.sin(ENTRANCE_PATH.azimuth1) * ENTRANCE_PATH.radius1).toBeCloseTo(x, 6);
+    expect(Math.cos(ENTRANCE_PATH.azimuth1) * ENTRANCE_PATH.radius1).toBeCloseTo(z, 6);
+  });
+
+  it('D 批：入场起点 = 球面参数算出来的点（起点与路径不一致会导致首帧跳一下）', () => {
+    const [x, y, z] = ENTRANCE_START.position;
+    expect(Math.sin(ENTRANCE_PATH.azimuth0) * ENTRANCE_PATH.radius0).toBeCloseTo(x, 1);
+    expect(ENTRANCE_PATH.height0).toBe(y);
+    expect(Math.cos(ENTRANCE_PATH.azimuth0) * ENTRANCE_PATH.radius0).toBeCloseTo(z, 1);
   });
 });

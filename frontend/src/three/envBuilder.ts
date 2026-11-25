@@ -32,6 +32,13 @@ export interface EnvBuild {
   maintenanceLabels: Array<{ x: number; y: number; z: number; text: string }>;
   /** 各组实际合并后的绘制体数量（验收用：必须 ≤6） */
   drawables: Array<{ group: EnvGroup | 'labels'; meshes: number }>;
+  /**
+   * 剖切：让 `cut` 标记的墙段（见 envLayout.EnvPart.cut）整体不可见/恢复。
+   * 用合并索引退化为同一点实现——不加材质、不加 draw call，
+   * 阴影 pass 与主 pass 共用同一份索引，不会出现"墙没了影子还在"。
+   * 只应在集合内容变化时调用（内部会无条件重传 GPU 缓冲）。
+   */
+  setCutaway: (ids: ReadonlySet<string>) => void;
   dispose: () => void;
 }
 
@@ -144,6 +151,15 @@ export function buildEnv(): EnvBuild {
 
   const drawables: EnvBuild['drawables'] = [];
 
+  /** 剖切段登记：cut id → 它在各组合并索引里的区间（BoxGeometry 36 索引/段，恢复用 saved 原值） */
+  interface CutRange {
+    attr: THREE.BufferAttribute;
+    start: number;
+    end: number;
+    saved: Uint16Array | Uint32Array;
+  }
+  const cutRanges = new Map<string, CutRange[]>();
+
   const groups: Array<{ group: EnvGroup; material: THREE.Material; castShadow: boolean; receiveShadow: boolean }> = [
     {
       group: 'matte',
@@ -193,9 +209,27 @@ export function buildEnv(): EnvBuild {
     const list = parts.filter((p) => p.group === cfg.group);
     if (!list.length) continue;
     const geos = list.map((p) => toGeometry(p));
+    // 剖切段登记要在 dispose 之前读 index，且必须按合并顺序累计索引基址——
+    // mergeGeometries 会把第 i 个子几何的索引整体平移到 [基址, 基址+count)
+    let indexBase = 0;
+    const pendingCuts: Array<{ cut: string; start: number; end: number }> = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const cnt = geos[i].index?.count ?? 0;
+      if (list[i].cut && cnt > 0) pendingCuts.push({ cut: list[i].cut!, start: indexBase, end: indexBase + cnt });
+      indexBase += cnt;
+    }
     const merged = mergeGeometries(geos, false);
     for (const g of geos) g.dispose();
     if (!merged) throw new Error(`环境层几何合并失败：${cfg.group}`);
+    if (pendingCuts.length && merged.index) {
+      merged.index.setUsage(THREE.DynamicDrawUsage); // 运行时会反复写
+      for (const pc of pendingCuts) {
+        const saved = (merged.index.array as Uint16Array | Uint32Array).slice(pc.start, pc.end) as Uint16Array | Uint32Array;
+        const list2 = cutRanges.get(pc.cut) ?? [];
+        list2.push({ attr: merged.index, start: pc.start, end: pc.end, saved });
+        cutRanges.set(pc.cut, list2);
+      }
+    }
     const mesh = new THREE.Mesh(track(merged), cfg.material);
     mesh.name = `env:${cfg.group}`;
     mesh.castShadow = cfg.castShadow;
@@ -221,6 +255,19 @@ export function buildEnv(): EnvBuild {
     drawables.push({ group: 'labels', meshes: 1 });
   }
 
+  /** 剖切开关：隐藏=三组索引全写成 0 号顶点（退化三角形，光栅化直接丢弃）；恢复=写回 saved 原值 */
+  const setCutaway = (ids: ReadonlySet<string>) => {
+    for (const [cut, ranges] of cutRanges) {
+      const hide = ids.has(cut);
+      for (const r of ranges) {
+        const arr = r.attr.array as Uint16Array | Uint32Array;
+        if (hide) arr.fill(0, r.start, r.end);
+        else arr.set(r.saved, r.start);
+        r.attr.needsUpdate = true;
+      }
+    }
+  };
+
   const dispose = () => {
     for (const g of geometries) g.dispose();
     for (const m of materials) m.dispose();
@@ -232,6 +279,7 @@ export function buildEnv(): EnvBuild {
     kinds: [...env.kinds, ...lineProps.kinds],
     maintenanceLabels: lineProps.maintenanceLabels,
     drawables,
+    setCutaway,
     dispose,
   };
 }

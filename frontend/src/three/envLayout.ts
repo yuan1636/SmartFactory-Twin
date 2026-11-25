@@ -14,6 +14,7 @@
  */
 
 import { DEVICE_LAYOUT, FACTORY, LINE_STRIPS, POWER_STATION, WORKSHOPS } from './layout';
+import { buildInterior } from './envInterior';
 import { buildSigns } from './propLayout';
 import type { LineScenario } from './scenario';
 
@@ -33,6 +34,12 @@ export interface EnvPart {
   rotX?: number;
   rotY?: number;
   rotZ?: number;
+  /**
+   * 剖切组 id（如 `WS-A:south`）：相机在该车间这一侧的室外时，整组退化为不可见。
+   * 实现在 envBuilder（把合并索引退化为同一点，不加材质不加 draw call），
+   * 触发规则在 envInterior.cutawaySides——这里只是数据标记。
+   */
+  cut?: string;
 }
 
 export interface EnvLabelSpec {
@@ -114,78 +121,6 @@ const cone = (group: EnvGroup, color: number, x: number, y: number, z: number, r
   sy: h,
   sz: rTop,
 });
-
-// ---------------------------------------------------------------- 1. 柱子
-
-export const COLUMN_SIZE = 0.6;
-export const COLUMN_HEIGHT = 8;
-
-/**
- * 厂房柱子：沿南北墙每 6.8 m 一根，车间中线只留 3 根（z = -9 / 0 / 9）→ 实拍后减为 z = 0 一根。
- * 为什么必须有：现状只有地面，抬头看不到任何竖向结构，画面像"露天场地"。
- * 为什么减（作者 2026-11-25 反馈"影响观看"）：z = ±9 的中线柱离产线只有 1.5 m，
- * 斜侧机位正好被它挡住半条线；只保留两条产线正中间（z = 0）那一根，它不挡任何一侧的视线。
- */
-export function buildColumns(): EnvPart[] {
-  const parts: EnvPart[] = [];
-  for (const ws of WORKSHOPS) {
-    const halfX = ws.sizeX / 2 - 0.8;
-    const halfZ = ws.sizeZ / 2 - 0.8;
-    for (const sz of [-1, 1]) {
-      for (let i = 0; i < 5; i += 1) {
-        const x = ws.x - halfX + (i * (2 * halfX)) / 4;
-        parts.push(box('matte', ENV_COLORS.column, x, COLUMN_HEIGHT / 2, ws.z + sz * halfZ, COLUMN_SIZE, COLUMN_HEIGHT, COLUMN_SIZE));
-      }
-    }
-    parts.push(box('matte', ENV_COLORS.column, ws.x, COLUMN_HEIGHT / 2, ws.z, COLUMN_SIZE, COLUMN_HEIGHT, COLUMN_SIZE));
-  }
-  return parts;
-}
-
-// ---------------------------------------------------------------- 2. 屋顶桁架
-
-export const TRUSS_HEIGHT = 8.35;
-
-/**
- * 屋顶桁架：每车间 5 榀（沿 X 每 6.8 m 一榀），每榀 = 上下弦 + 11 根竖腹杆；
- * 另加 5 道纵向檩条。不铺屋面板——总览机位在 y=40 俯视，实心屋顶会挡住全部设备（D-53 的取舍不变）。
- */
-export function buildTrusses(): EnvPart[] {
-  const parts: EnvPart[] = [];
-  for (const ws of WORKSHOPS) {
-    const span = ws.sizeZ - 1; // 29，两端各留 0.5 与墙脱离
-    for (let k = -2; k <= 2; k += 1) {
-      const x = ws.x + k * 6.8;
-      parts.push(box('metal', ENV_COLORS.truss, x, TRUSS_HEIGHT + 0.5, ws.z, 0.22, 0.28, span));
-      parts.push(box('metal', ENV_COLORS.truss, x, TRUSS_HEIGHT - 0.3, ws.z, 0.18, 0.22, span));
-      for (let i = 0; i <= 10; i += 1) {
-        const z = ws.z - span / 2 + (i * span) / 10;
-        parts.push(box('metal', ENV_COLORS.truss, x, TRUSS_HEIGHT + 0.1, z, 0.12, 0.8, 0.12));
-      }
-    }
-    for (const dz of [-12, -6, 0, 6, 12]) {
-      parts.push(box('metal', ENV_COLORS.purlin, ws.x, TRUSS_HEIGHT + 0.62, ws.z + dz, ws.sizeX - 1.4, 0.14, 0.14));
-    }
-  }
-  return parts;
-}
-
-// ---------------------------------------------------------------- 3. 顶部灯带
-
-/**
- * 顶部灯带：每条产线正上方一道、中央通道一道。自发光材质，不投光（真灯每盏都会触发阴影重算）。
- */
-export function buildLightStrips(): EnvPart[] {
-  const parts: EnvPart[] = [];
-  for (const strip of LINE_STRIPS) {
-    const mid = (strip.x1 + strip.x2) / 2;
-    const len = Math.abs(strip.x2 - strip.x1);
-    // y=7.88：贴着桁架下弦（8.05 减半个弦高），灯带不再像悬空的白色长条
-    parts.push(box('emissive', ENV_COLORS.lamp, mid, 7.88, strip.z, len, 0.12, 0.34));
-  }
-  parts.push(box('emissive', ENV_COLORS.lamp, 0, 7.88, 0, 0.34, 0.12, WORKSHOPS[0].sizeZ - 1));
-  return parts;
-}
 
 // ---------------------------------------------------------------- 4. 地坪涂装
 
@@ -568,10 +503,9 @@ export interface EnvironmentResult {
 
 /** 环境层三件套（不含产线道具）：给单测与验收断言"类别齐不齐"用 */
 export function buildEnvironment(): EnvironmentResult {
+  const interior = buildInterior();
   const parts: EnvPart[] = [
-    ...buildColumns(),
-    ...buildTrusses(),
-    ...buildLightStrips(),
+    ...interior.parts,
     ...buildFloorPaint(),
     ...buildCableRuns(),
     ...buildOffice(),
@@ -582,7 +516,15 @@ export function buildEnvironment(): EnvironmentResult {
   return {
     parts,
     labels: buildStationLabels(),
-    kinds: ['columns', 'trusses', 'light-strips', 'floor-paint', 'cable-tray', 'office', 'outer-racks', 'sign-posts', 'safety'],
+    kinds: [
+      ...interior.kinds,
+      'floor-paint',
+      'cable-tray',
+      'office',
+      'outer-racks',
+      'sign-posts',
+      'safety',
+    ],
   };
 }
 

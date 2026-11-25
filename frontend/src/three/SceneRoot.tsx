@@ -12,6 +12,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { readStore, subscribeStore } from '../hooks/useTelemetry';
 import type { EffectiveState } from '../utils/status';
 import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, type DeviceVisual } from './builders';
+import { cutawaySides } from './envInterior';
 import { CAMERA_PRESETS, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
 import { createLabelRenderer } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
@@ -227,6 +228,23 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     const fill = new THREE.DirectionalLight(0x9dc4e8, 0.45);
     fill.position.set(-40, 30, -25);
     scene.add(fill);
+
+    // ---- D 批 R1：室内补光 ----
+    // 车间装回 8 m 围墙后，上面这盏投影主光被挡在墙外，室内只剩不到一半的照度（实测会暗 20%+）。
+    // 三件一套：半球光抬底（模拟墙面/地面的互相反弹），两盏不投影的天窗光把光"从屋顶漏进来"。
+    // 都不投影：室内已经有主光的投影，再加两套阴影会让地面发脏，而且阴影贴图重算三倍。
+    const interiorHemi = new THREE.HemisphereLight(0x9fb2c4, 0x1f2b3a, 1.15);
+    scene.add(interiorHemi);
+
+    const skylight1 = new THREE.DirectionalLight(0xdce8f4, 1.35);
+    skylight1.position.set(-26, 44, 52); // 从南侧天窗方向斜下
+    skylight1.castShadow = false;
+    scene.add(skylight1);
+
+    const skylight2 = new THREE.DirectionalLight(0xcfdcea, 0.9);
+    skylight2.position.set(34, 40, -46); // 反侧补，避免室内只剩一个方向的明暗
+    skylight2.castShadow = false;
+    scene.add(skylight2);
 
     const build = buildFactory();
     scene.add(build.root);
@@ -489,6 +507,18 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       return { sceneCalls: calls, sceneTriangles: triangles, withShadows };
     };
 
+    // ---------- 室外剖切（D 批 R1）----------
+    // 相机落在车间某侧室外 → 那面墙整组退化（规则 envInterior.cutawaySides）。
+    // 每帧算一次集合，集合没变不写 GPU 缓冲；入场动画/巡游/手动轨道全覆盖。
+    let lastCutKey = '';
+    const applyCutaway = () => {
+      const ids = cutawaySides(camera.position);
+      const key = ids.join('|');
+      if (key === lastCutKey) return;
+      lastCutKey = key;
+      build.setCutaway(new Set(ids));
+    };
+
     // ---------- 主循环 ----------
     const clock = new THREE.Clock();
     let prevT = 0;
@@ -573,6 +603,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 
       motion.update(dt, stateOf);
       animateMaterial(t);
+      applyCutaway();
       controls.update();
       renderFrame();
       labelRenderer.render(scene, camera);

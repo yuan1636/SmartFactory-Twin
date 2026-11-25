@@ -79,6 +79,8 @@ export interface FactoryBuild {
   envKinds: string[];
   /** 环境层各组实际绘制体数量：合计必须 ≤6（一物一 mesh 会在这里露馅） */
   envDrawables: Array<{ group: string; meshes: number }>;
+  /** 室外剖切（D 批 R1）：相机在某车间某侧室外时把那面墙退化掉，规则见 envInterior.cutawaySides */
+  setCutaway: (ids: ReadonlySet<string>) => void;
   /** 输送机滚筒（按 device_id） */
   rollers: Map<string, RollerRig>;
   /** 机器人摆动枢轴（按 device_id） */
@@ -454,6 +456,7 @@ export function buildFactory(): FactoryBuild {
     propKinds: props.kinds,
     envKinds: env.kinds,
     envDrawables: env.drawables,
+    setCutaway: env.setCutaway,
     rollers,
     arms,
     dispose,
