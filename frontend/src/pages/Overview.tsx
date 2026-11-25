@@ -55,13 +55,18 @@ export default function Overview() {
   const summary = snapshot.summary;
   const stale = stalenessText(snapshot.devices[0]?.ts);
   const hasData = snapshot.hasData;
+  // D3：三维/列表点中的设备详情卡数据源（实时快照，未连上时各值为 —）
+  const focusedDevice = focused
+    ? snapshot.devices.find((d) => d.device_id === focused) ?? null
+    : null;
 
   const workshopName = (id: string) =>
     workshops.data?.items.find((w) => w.id === id)?.name ?? id;
 
+  // D3（偏差 D-55）：点行只选中 + 推近（相机飞行由 SceneRoot 的 select 统一处理），
+  // 不再直接跳监控页；跳转入口挪进详情卡的「查看监控页」按钮。
   const onPickDevice = (id: string) => {
     setFocused(id);
-    sceneRef.current?.focusDevice(id);
   };
 
   const onPreset = (key: PresetKey) => {
@@ -109,18 +114,24 @@ export default function Overview() {
             <SceneRoot
               ref={sceneRef}
               selectedDeviceId={focused}
-              // 规格 6.3：三维里 click 命中设备要直接进监控页（列表行才只做聚焦，见 5.2）
+              // D3（偏差 D-55）：三维点击 = 选中 + 侧栏弹详情 + 推近，不再跳转监控页
               onSelectDevice={(id) => {
                 setFocused(id);
-                navigate(`/devices/${id}`);
               }}
             />
             <div className="viewport__overlay-top">
               {(Object.keys(CAMERA_PRESETS) as PresetKey[]).map((key) => (
                 <button key={key} type="button" className="btn btn--ghost" onClick={() => onPreset(key)}>
-                  {key === 'overview' ? '总览' : key}
+                  {key === 'overview' ? '总览' : key === 'DEVICE' ? '设备特写' : key}
                 </button>
               ))}
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => sceneRef.current?.toggleTour()}
+              >
+                巡游
+              </button>
               <button
                 type="button"
                 className="btn btn--ghost"
@@ -162,6 +173,43 @@ export default function Overview() {
             </select>
           </div>
         </div>
+        {focusedDevice ? (
+          <div className="device-detail" data-testid="device-detail">
+            <div className="device-detail__head">
+              <span
+                className="status-dot"
+                style={{ background: STATE_META[focusedDevice.state].hex }}
+                title={STATE_META[focusedDevice.state].label}
+              />
+              <span className="device-detail__title" data-testid="device-detail-title">
+                {focusedDevice.device_id}
+              </span>
+              <span className="device-detail__name">{focusedDevice.device_name}</span>
+              <button
+                type="button"
+                className="btn btn--ghost device-detail__close"
+                aria-label="关闭详情"
+                onClick={() => setFocused(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="device-detail__metrics">
+              <span>温度 {formatMetric('temperature', focusedDevice.metrics.temperature)}</span>
+              <span>振动 {formatMetric('vibration', focusedDevice.metrics.vibration)}</span>
+              <span>电流 {formatMetric('current', focusedDevice.metrics.current)}</span>
+              <span>转速 {focusedDevice.metrics.speed === 0 ? '—' : formatMetric('speed', focusedDevice.metrics.speed)}</span>
+            </div>
+            <div className="device-detail__foot">
+              <span className="muted">
+                {focusedDevice.open_alarm_count > 0 ? `未解除告警 ${focusedDevice.open_alarm_count} 条` : '当前无告警'}
+              </span>
+              <button type="button" className="btn btn--ghost" onClick={() => navigate(`/devices/${focusedDevice.device_id}`)}>
+                查看监控页
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="device-list">
           {!hasData && workshops.error ? (
             <ErrorState error={workshops.error} onRetry={workshops.refresh} />

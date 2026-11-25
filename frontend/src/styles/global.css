@@ -597,6 +597,22 @@ textarea {
   z-index: 5;
 }
 
+/* D3 巡游角标：纯 DOM 提示，不占 draw call（D-52 的预算留给 D4 粒子）。
+   放左上角：右上角是预设按钮排，放中间会压住它们（实拍发现） */
+.viewport__tour {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-3);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(11, 16, 24, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 12px;
+  z-index: 5;
+  pointer-events: none;
+}
+
 /* CSS2D 设备标签 */
 .device-label {
   font-size: 11px;
@@ -687,6 +703,60 @@ textarea {
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-3) var(--sp-2);
   border-bottom: 1px solid var(--border);
+}
+
+/* D3 设备详情卡：三维点击后侧栏弹出的那块（data-testid 供验收脚本断言） */
+.device-detail {
+  border-bottom: 1px solid var(--border);
+  padding: var(--sp-2) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-panel-alt);
+}
+
+.device-detail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.device-detail__title {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.device-detail__name {
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-detail__close {
+  margin-left: auto;
+  padding: 0 6px;
+  line-height: 1.2;
+}
+
+.device-detail__metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.device-detail__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
 }
 
 .device-list__row {

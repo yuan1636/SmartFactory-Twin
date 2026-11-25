@@ -111,6 +111,26 @@ export function sizeKeyOf(deviceType: string, deviceId: string): keyof typeof DE
   return 'CNC';
 }
 
+/** 由设备 ID 前缀推类型：DEVICE_LAYOUT 只有坐标没有 device_type，调试与验收够用。 */
+export function deviceTypeOf(deviceId: string): string {
+  if (deviceId.startsWith('ROB')) return 'ROBOT';
+  if (deviceId.startsWith('CONV')) return 'CONVEYOR';
+  if (deviceId.startsWith('INSP')) return 'INSPECTION';
+  if (deviceId.startsWith('AIR') || deviceId.startsWith('PUMP')) return 'AUX';
+  return 'CNC';
+}
+
+/** 设备包围盒（y 从地面到机身顶）：D3 验收脚本用它断言相机路径不穿设备。 */
+export function deviceBox(deviceId: string): { min: [number, number, number]; max: [number, number, number] } | null {
+  const p = DEVICE_LAYOUT[deviceId];
+  if (!p) return null;
+  const s = DEVICE_SIZES[sizeKeyOf(deviceTypeOf(deviceId), deviceId)];
+  return {
+    min: [p.x - s.x / 2, 0, p.z - s.z / 2],
+    max: [p.x + s.x / 2, s.y, p.z + s.z / 2],
+  };
+}
+
 /** 设备清单与坐标表的一致性检查（启动时打日志，验收脚本据此判断）。 */
 export function missingPlacements(deviceIds: string[]): string[] {
   return deviceIds.filter((id) => !DEVICE_LAYOUT[id]);

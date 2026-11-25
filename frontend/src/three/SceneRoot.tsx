@@ -12,9 +12,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { readStore, subscribeStore } from '../hooks/useTelemetry';
 import type { EffectiveState } from '../utils/status';
 import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, type DeviceVisual } from './builders';
-import { CAMERA_PRESETS, ORBIT_LIMITS, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
+import { CAMERA_PRESETS, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
 import { createLabelRenderer } from './labels';
-import { DEVICE_LAYOUT } from './layout';
+import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
 import { createPostFx, FOG, POSTFX, type PostFx } from './postfx';
 
@@ -34,12 +34,14 @@ export interface SceneStats {
 export interface SceneHandle {
   setPreset: (key: PresetKey) => void;
   focusDevice: (deviceId: string) => void;
+  toggleTour: () => void;
   getStats: () => SceneStats;
 }
 
 interface SceneRootProps {
   selectedDeviceId?: string | null;
-  onSelectDevice?: (deviceId: string) => void;
+  /** D3 起：三维点击不再跳转监控页，外层负责弹设备详情；传 null 表示清除选中（R 复位） */
+  onSelectDevice?: (deviceId: string | null) => void;
   showFps?: boolean;
 }
 
@@ -47,8 +49,24 @@ declare global {
   interface Window {
     __sceneDebug?: {
       renderInfo: () => SceneStats;
-      /** 只读相机位姿：验收脚本用它确认预设切换有缓动、且镜头不会钻到地面以下 */
-      camera: () => { position: [number, number, number]; target: [number, number, number] };
+      /** 只读相机位姿：验收脚本用它确认预设切换有缓动、且镜头不会钻到地面以下。
+       *  lastTransitionMs 是最近一次完成的过渡的实际耗时（入场完成前为 null），D3 验收读它断言时长；
+       *  transitionSeq 每完成一次过渡 +1：脚本靠它判断「过渡结束了」，比比对耗时长得多
+       *  （两次过渡耗时可能因帧量化恰好相等，用时延判断会漏判） */
+      camera: () => {
+        position: [number, number, number];
+        target: [number, number, number];
+        lastTransitionMs: number | null;
+        transitionSeq: number;
+      };
+      /** D3：5 个预设的键名与位姿（脚本两两切换、断言终点位姿用） */
+      presets: () => Array<{ key: PresetKey; position: [number, number, number]; target: [number, number, number] }>;
+      /** D3：14 台设备包围盒（断言相机过渡路径不穿设备） */
+      deviceBoxes: () => Record<string, { min: [number, number, number]; max: [number, number, number] }>;
+      /** D3：设备中心投影到屏幕的 CSS 像素坐标（逐台点击测命中率用） */
+      deviceAnchors: () => Record<string, { x: number; y: number; behind: boolean }>;
+      /** D3：巡游状态（第几站、站名、是否在跑） */
+      tour: () => { active: boolean; index: number; station: PresetKey };
       /** 产线运行动画快照：验收脚本用它确认物料在动、堵料时停在设备前、降级时冻结 */
       lineMotion: () => MotionSnapshot;
       /** 实时设备状态表（WS 未连上时全为 null）：验收脚本据此推导哪条产线该被挡住 */
@@ -84,7 +102,12 @@ declare global {
   }
 }
 
-const TWEEN_MS = 600;
+// 过渡时长（D3）。预设切换硬指标 ≤1200ms，计划 1000ms 留掉帧余量；
+// 入场 3.0±0.2s；setCamera 是调试钩子，audit-shot.mjs 按它等待，改动必须同步那边。
+const DUR_PRESET = 1000;
+const DUR_ENTRANCE = 3000;
+const DUR_SETCAM = 600;
+const TOUR_INTERVAL_MS = 6000; // 巡游每 6 秒换一个机位（规格 D3）
 
 const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
   { selectedDeviceId = null, onSelectDevice, showFps = true },
@@ -92,9 +115,12 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const fpsRef = useRef<HTMLDivElement | null>(null);
+  const tourRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<{
     setPreset: (key: PresetKey) => void;
     focusDevice: (deviceId: string) => void;
+    toggleTour: () => void;
+    select: (deviceId: string | null) => void;
     getStats: () => SceneStats;
   } | null>(null);
   const selectedRef = useRef<string | null>(selectedDeviceId);
@@ -104,13 +130,15 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
   useImperativeHandle(ref, () => ({
     setPreset: (key) => apiRef.current?.setPreset(key),
     focusDevice: (id) => apiRef.current?.focusDevice(id),
+    toggleTour: () => apiRef.current?.toggleTour(),
     getStats: () => apiRef.current?.getStats() ?? { calls: 0, triangles: 0, fps: 0, sceneCalls: 0, shadowCalls: 0, postPasses: 0 },
   }));
 
-  // 选中态变化只需要改描边，不必重建场景
+  // 选中态变化只需要改描边 + 推近相机，不必重建场景。
+  // 相机飞行也走这里（而不是点击处理里直接飞）：3D 点击与侧栏列表点行最终都汇到这一条路，不会双重过渡。
   useEffect(() => {
     selectedRef.current = selectedDeviceId;
-    apiRef.current?.focusDevice(selectedDeviceId ?? '');
+    apiRef.current?.select(selectedDeviceId);
   }, [selectedDeviceId]);
 
   useEffect(() => {
@@ -230,17 +258,68 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     applyStore();
     const unsubscribe = subscribeStore(applyStore);
 
-    // ---------- 相机缓动（不做瞬移，瞬移会让人分不清方向） ----------
-    const tween = { active: false, start: 0, fromPos: new THREE.Vector3(), toPos: new THREE.Vector3(), fromTarget: new THREE.Vector3(), toTarget: new THREE.Vector3() };
+    // ---------- 动效降级开关（提前到相机逻辑之前：入场动画要不要跑由它决定） ----------
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    const moveTo = (pose: CameraPose) => {
+    // ---------- 入场动画：3 秒从场外绕到总览机位（规格 D3：是「绕过来」，不是瞬移） ----------
+    // 起点参数写在 ENTRANCE_PATH；起点距原点必须 < maxDistance(90)，否则第一帧就被 OrbitControls 夹回。
+    const entrance = { active: !reduceMotion, start: performance.now() };
+
+    // ---------- 相机过渡（D3 重做）----------
+    // 位置走二次贝塞尔、中间控制点抬高：直线插值在低位机位之间会擦过机身（规格 D3 风险①）。
+    // lastTransitionMs 记录「实际」耗时而不是计划值，验收脚本读到的数字才可信。
+    const tween = {
+      active: false,
+      start: 0,
+      duration: DUR_PRESET,
+      fromPos: new THREE.Vector3(),
+      midPos: new THREE.Vector3(),
+      toPos: new THREE.Vector3(),
+      fromTarget: new THREE.Vector3(),
+      toTarget: new THREE.Vector3(),
+    };
+    let lastTransitionMs: number | null = null;
+    let transitionSeq = 0;
+
+    const moveTo = (pose: CameraPose, duration = DUR_PRESET) => {
+      entrance.active = false;
       tween.active = true;
       tween.start = performance.now();
+      tween.duration = duration;
       tween.fromPos.copy(camera.position);
       tween.toPos.set(...pose.position);
       tween.fromTarget.copy(controls.target);
       tween.toTarget.set(...pose.target);
+      tween.midPos.lerpVectors(tween.fromPos, tween.toPos, 0.5);
+      // 抬高量与两点距离成正比、封顶 10 米：够越过最高设备（2.6 m）外加安全余量
+      tween.midPos.y += Math.min(10, tween.fromPos.distanceTo(tween.toPos) * 0.18);
     };
+
+    // ---------- 巡游模式（D3）：每 6 秒换一个预设机位循环不停；任何手动操作立即退出，
+    // 否则演示时会出现「镜头自己跑、鼠标拉不回来」（规格 D3 风险②） ----------
+    const tour = { active: false, index: 0, nextAt: 0 };
+    const syncTourBadge = () => {
+      const el = tourRef.current;
+      if (!el) return;
+      el.style.display = tour.active ? 'block' : 'none';
+      if (tour.active) {
+        el.textContent = `巡游中 · 第 ${tour.index + 1}/${PRESET_ORDER.length} 站 · 按 P 或点击画面退出`;
+      }
+    };
+    const startTour = () => {
+      entrance.active = false;
+      tour.index = 0;
+      moveTo(CAMERA_PRESETS[PRESET_ORDER[0]]);
+      tour.active = true;
+      tour.nextAt = performance.now() + TOUR_INTERVAL_MS;
+      syncTourBadge();
+    };
+    const stopTour = () => {
+      if (!tour.active) return;
+      tour.active = false;
+      syncTourBadge();
+    };
+    const toggleTour = () => (tour.active ? stopTour() : startTour());
 
     // ---------- 指针拾取 ----------
     const raycaster = new THREE.Raycaster();
@@ -279,7 +358,14 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 
     let downAt: { x: number; y: number } | null = null;
     const onPointerDown = (event: PointerEvent) => {
+      // 手动操作立即退出巡游 / 打断入场（规格 D3 风险②：不能出现镜头自己跑、拉不回来）
+      stopTour();
+      entrance.active = false;
       downAt = { x: event.clientX, y: event.clientY };
+    };
+    const onWheel = () => {
+      stopTour();
+      entrance.active = false;
     };
     const onPointerUp = (event: PointerEvent) => {
       if (!downAt) return;
@@ -290,13 +376,36 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       if (!id) return;
       selectedRef.current = id;
       refreshHighlight();
-      moveTo(focusPose(DEVICE_LAYOUT[id]?.x ?? 0, DEVICE_LAYOUT[id]?.z ?? 0));
+      // D3（偏差 D-55）：点击只推近 + 通知外层弹设备详情，不再直接跳转监控页；
+      // 相机飞行统一由 [selectedDeviceId] 副作用触发，这里不重复 moveTo。
       onSelectRef.current?.(id);
     };
 
     renderer.domElement.addEventListener('pointermove', onPointerMove);
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
+
+    // ---------- 键位（D3）：1~5 切预设、R 复位、P 巡游。输入控件聚焦时不抢键 ----------
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      const key = event.key.toLowerCase();
+      if (key >= '1' && key <= '5') {
+        stopTour();
+        moveTo(CAMERA_PRESETS[PRESET_ORDER[Number(key) - 1]]);
+      } else if (key === 'r') {
+        stopTour();
+        selectedRef.current = null;
+        refreshHighlight();
+        onSelectRef.current?.(null);
+        moveTo(CAMERA_PRESETS.overview);
+      } else if (key === 'p') {
+        toggleTour();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
 
     // ---------- 自适应尺寸 ----------
     const resize = () => {
@@ -341,7 +450,6 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     };
 
     // ---------- 主循环 ----------
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const clock = new THREE.Clock();
     let prevT = 0;
     let raf = 0;
@@ -378,12 +486,49 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       const dt = frozen ? 0 : Math.max(0, t - prevT);
       prevT = t;
 
-      if (tween.active) {
-        const progress = Math.min(1, (performance.now() - tween.start) / TWEEN_MS);
+      // 入场优先：绕场球面插值（方位角/半径/高度分别缓动），终点与 overview 预设重合
+      if (entrance.active) {
+        const elapsed = performance.now() - entrance.start;
+        const progress = Math.min(1, elapsed / DUR_ENTRANCE);
         const eased = 1 - (1 - progress) ** 3;
-        camera.position.lerpVectors(tween.fromPos, tween.toPos, eased);
+        const azimuth = ENTRANCE_PATH.azimuth0 + (ENTRANCE_PATH.azimuth1 - ENTRANCE_PATH.azimuth0) * eased;
+        const radius = ENTRANCE_PATH.radius0 + (ENTRANCE_PATH.radius1 - ENTRANCE_PATH.radius0) * eased;
+        const height = ENTRANCE_PATH.height0 + (ENTRANCE_PATH.height1 - ENTRANCE_PATH.height0) * eased;
+        camera.position.set(Math.sin(azimuth) * radius, height, Math.cos(azimuth) * radius);
+        controls.target.set(...ENTRANCE_START.target);
+        if (progress >= 1) {
+          entrance.active = false;
+          lastTransitionMs = elapsed;
+          transitionSeq += 1;
+        }
+      } else if (tween.active) {
+        const elapsed = performance.now() - tween.start;
+        const progress = Math.min(1, elapsed / tween.duration);
+        const eased = 1 - (1 - progress) ** 3;
+        // 二次贝塞尔 P(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2，P1 是抬高后的中点
+        const u = 1 - eased;
+        const w0 = u * u;
+        const w1 = 2 * u * eased;
+        const w2 = eased * eased;
+        camera.position.set(
+          w0 * tween.fromPos.x + w1 * tween.midPos.x + w2 * tween.toPos.x,
+          w0 * tween.fromPos.y + w1 * tween.midPos.y + w2 * tween.toPos.y,
+          w0 * tween.fromPos.z + w1 * tween.midPos.z + w2 * tween.toPos.z,
+        );
         controls.target.lerpVectors(tween.fromTarget, tween.toTarget, eased);
-        if (progress >= 1) tween.active = false;
+        if (progress >= 1) {
+          tween.active = false;
+          lastTransitionMs = elapsed;
+          transitionSeq += 1;
+        }
+      }
+
+      // 巡游推进：到点换下一站，循环不停
+      if (tour.active && performance.now() >= tour.nextAt) {
+        tour.index = (tour.index + 1) % PRESET_ORDER.length;
+        moveTo(CAMERA_PRESETS[PRESET_ORDER[tour.index]]);
+        tour.nextAt += TOUR_INTERVAL_MS;
+        syncTourBadge();
       }
 
       motion.update(dt, stateOf);
@@ -491,13 +636,38 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         .sort((a, b) => b.meshes - a.meshes);
     };
 
+    /** 选中一台设备：改描边，fly=true 时相机推近（3D 点击与侧栏点行最终都汇到这里） */
+    const select = (deviceId: string | null, fly: boolean) => {
+      selectedRef.current = deviceId;
+      refreshHighlight();
+      if (fly && deviceId) {
+        const placement = DEVICE_LAYOUT[deviceId];
+        if (placement) moveTo(focusPose(placement.x, placement.z));
+      }
+    };
+
     apiRef.current = {
-      setPreset: (key) => moveTo(CAMERA_PRESETS[key]),
+      setPreset: (key) => {
+        stopTour();
+        // DEVICE 预设是「设备跟随」：看当前选中设备，没有选中时落回静态位姿（CNC-01 特写）
+        if (key === 'DEVICE') {
+          const id = selectedRef.current ?? 'CNC-01';
+          const placement = DEVICE_LAYOUT[id];
+          if (placement) {
+            moveTo(focusPose(placement.x, placement.z));
+            return;
+          }
+        }
+        moveTo(CAMERA_PRESETS[key]);
+      },
       focusDevice: (deviceId) => {
+        stopTour();
         if (!deviceId) return;
         const placement = DEVICE_LAYOUT[deviceId];
         if (placement) moveTo(focusPose(placement.x, placement.z));
       },
+      toggleTour: () => toggleTour(),
+      select: (deviceId) => select(deviceId, deviceId !== null),
       getStats,
     };
 
@@ -507,9 +677,40 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         camera: () => ({
           position: camera.position.toArray() as [number, number, number],
           target: controls.target.toArray() as [number, number, number],
+          lastTransitionMs,
+          transitionSeq,
         }),
+        /** D3：预设清单与位姿（脚本两两切换、断言终点位姿用） */
+        presets: () => PRESET_ORDER.map((key) => ({ key, ...CAMERA_PRESETS[key] })),
+        /** D3：14 台设备包围盒（断言相机过渡路径不穿设备） */
+        deviceBoxes: () => {
+          const out: Record<string, { min: [number, number, number]; max: [number, number, number] }> = {};
+          for (const id of Object.keys(DEVICE_LAYOUT)) {
+            const box = deviceBox(id);
+            if (box) out[id] = box;
+          }
+          return out;
+        },
+        /** D3：设备中心投影到屏幕的 CSS 像素坐标（逐台点击测命中率用） */
+        deviceAnchors: () => {
+          const rect = renderer.domElement.getBoundingClientRect();
+          const out: Record<string, { x: number; y: number; behind: boolean }> = {};
+          const v = new THREE.Vector3();
+          for (const [id, placement] of Object.entries(DEVICE_LAYOUT)) {
+            const size = DEVICE_SIZES[sizeKeyOf(deviceTypeOf(id), id)];
+            v.set(placement.x, size.y / 2, placement.z).project(camera);
+            out[id] = {
+              x: Math.round(((v.x + 1) / 2) * rect.width + rect.left),
+              y: Math.round(((1 - v.y) / 2) * rect.height + rect.top),
+              behind: v.z > 1,
+            };
+          }
+          return out;
+        },
+        /** D3：巡游状态 */
+        tour: () => ({ active: tour.active, index: tour.index, station: PRESET_ORDER[tour.index] }),
         lineMotion: () => motion.snapshot(),
-        setCamera: (pose: CameraPose) => moveTo(pose),
+        setCamera: (pose: CameraPose) => moveTo(pose, DUR_SETCAM),
         /** 后处理参数读数：D1 验收逐项比对规格 §6.1 的表 */
         postfx: () => postfx.describe(),
         /** 原子读四项开销：整链 / 场景 / 阴影 / 后处理（加不回总数就说明统计有漏） */
@@ -535,9 +736,11 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       cancelAnimationFrame(raf);
       unsubscribe();
       observer.disconnect();
+      window.removeEventListener('keydown', onKeyDown);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('wheel', onWheel);
       controls.dispose();
       motion.dispose();
       postfx.dispose();
@@ -559,7 +762,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       data-testid="scene-root"
     >
       {showFps ? <div className="viewport__fps" ref={fpsRef}>— fps</div> : null}
-      <div className="viewport__hint">左键拖拽旋转 · 滚轮缩放 · 点击设备查看详情</div>
+      <div className="viewport__tour" ref={tourRef} style={{ display: 'none' }} />
+      <div className="viewport__hint">左键拖拽旋转 · 滚轮缩放 · 点击设备看详情 · 键位 1~5 切视角 / R 复位 / P 巡游</div>
     </div>
   );
 });

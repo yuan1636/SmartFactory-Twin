@@ -296,13 +296,20 @@ async function checkOverview3D(s) {
   );
   check('10.2-6 hover 有高亮反馈', hovered, `标签 ${target.id}`);
 
+  // D3（偏差 D-55）起：三维点击不再跳转监控页，而是选中 + 侧栏弹设备详情 + 镜头推近；
+  // 跳转能力保留在详情卡的「查看监控页」按钮里，原「跳转到监控页」断言随之改写。
   await s.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: target.x, y: target.y, buttons: 0 });
   await s.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1, buttons: 1 });
   await s.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1, buttons: 0 });
   await sleep(1200);
 
   const path = await s.evaluate('location.pathname');
-  check('10.2-6 点击设备跳转到监控页', path.startsWith('/devices/'), `当前路径 ${path}`);
+  const title = await s.evaluate('document.querySelector(\'[data-testid="device-detail-title"]\')?.textContent ?? null');
+  check(
+    '10.2-6 点击设备弹出侧栏详情（不跳转，偏差 D-55）',
+    path.startsWith('/overview') && title === target.id,
+    `路径 ${path}，详情标题 ${title}`,
+  );
 }
 
 const session = await connect();
