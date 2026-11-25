@@ -3,10 +3,14 @@
 以虚拟机械加工工厂为场景（1 工厂 / 2 车间 / 4 生产线 / 14 台设备）的数字孪生演示系统。
 **第一版全部数据为模拟数据，不得对外表述为真实工厂数据。**
 
-本仓库当前处于 **第 4 阶段 4.4 批已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 推理），
+本仓库当前处于 **第 4 阶段的展示改造，D2 批已完成**：五个页面全部可运行（三维总览 / 设备监控 / 生产分析 / 告警与维护 / AI 推理），
 **三维产线会随设备状态真实运行**（物料流动、闸门阻挡排队、滚筒转动、机器人摆动），
 **AI 异常检测已接入页面**（模型指标 / 混淆矩阵 / 四模型对比 / 分数曲线全部来自 `/ml/*` 实时返回，页面无写死数字），
-**遥测表已迁到 TimescaleDB 并启用压缩**（456 万行：普通表 1,001 MB → hypertable 压缩后 234 MB），附一键启动脚本。
+**遥测表已迁到 TimescaleDB 并启用压缩**（456 万行：普通表 1,001 MB → hypertable 压缩后 234 MB）。
+
+第 4 阶段在 2026-11-25 按作者决策**转向展示能力**（判据是「看得懂、看得像、点得动、演得住」）：
+已交付 D0 现状体检 / D1 视觉基调（后处理 + 材质）/ D2 工业道具（七类 + 场景合批 120→77）；
+D3 镜头与交互 / D4 动效生命感 / D5 界面层 / D6 性能与演示物料待做。附一键启动脚本。
 
 ## 当前进度
 
@@ -15,10 +19,11 @@
 | 第 1 阶段 | 业务底座与文档（方案、架构、数据模型、设备清单） | 已完成，见 `docs/方案.md` |
 | 第 2 阶段 | 模拟器 + REST API + WebSocket 推送 + 告警判定 + 生产订单推进 | 已完成，见 `docs/spec_phase2.md`、`docs/acceptance_phase2.md` |
 | 第 3 阶段 | React + TypeScript + Three.js + ECharts 前端 | 已完成并验收（5 个可用页；10.1 八条 + 10.2 十二项；产线运行动画 17 项） |
-| **第 4 阶段** | **数据处理流水线 + AI 模型 + 页面接入 + 时序库** | **进行中：4.1（异常检测）4.2（后端接入 + AI 页）4.3（TimescaleDB 迁移）4.4（压缩与查询对比）已完成**，4.5 Kafka 决策记录 / 4.6 故障风险 / 4.7 产量预测未开始 |
+| 第 4 阶段 A（数据与 AI） | 异常检测训练、后端接入 + AI 页、TimescaleDB 迁移与压缩 | 已完成（原 4.1~4.4 批，见 `docs/acceptance_phase4.md` 第 1~9 节） |
+| **第 4 阶段 B（展示）** | **三维界面展示与演示能力** | **进行中：D0 体检 / D1 视觉基调 / D2 工业道具已完成**；D3 镜头与交互 / D4 动效 / D5 界面层 / D6 性能与演示物料待做 |
 
 - 第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.1 已冻结**，v1.1 在 v1.0 上增补 §6.7 产线运行动画），验收记录见 `docs/acceptance_phase3.md`。
-- 第 4 阶段的施工依据是 `docs/spec_phase4.md`（**v2.0 生效**，2026-11-25 按作者六项决策重规划：Kafka 不接、TimescaleDB 接、D/E 块降级为可行性评估 + 基线对比；v1.0 与 v1.1 原文归档在 `docs/archive/`），验收记录见 `docs/acceptance_phase4.md` 第 8、9 节。
+- 第 4 阶段的施工依据是 `docs/spec_phase4.md`（**v4.0 生效**，2026-11-25 目标改为三维界面展示与演示能力：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结；v1.0 / v1.1 / v2.0 原文归档在 `docs/archive/`），验收记录见 `docs/acceptance_phase4.md` 第 8~11 节。
 
 ## 目录结构
 
@@ -26,7 +31,7 @@
 AGENTS.md                    项目协作规则（最高优先级）
 docs/方案.md                 项目总体方案（实验方案 V1.0）
 docs/spec_phase2.md          第 2 阶段实现规格（v1.1 冻结）
-docs/spec_phase4.md          第 4 阶段实现规格（v1.1 生效，含偏差 D-11～D-25）
+docs/spec_phase4.md          第 4 阶段实现规格（v4.0 生效：展示优先，含偏差 D-11～D-53）
 config/devices.json          14 台设备清单 + 正常区间 + 告警阈值 + 注入参数（唯一来源）
 database/schema.sql          建表脚本（10 表 / 15 索引，只建不删，可重复执行）
 database/migrate_timescale.sql  device_telemetry → hypertable + 压缩设置（可重复执行）
@@ -35,7 +40,10 @@ database/reset.sql           清库重建（⚠️ 会清空全部数据）
 database/reset_drop_only.sql 只删除表（配合分步重建）
 frontend/                    前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5）
   src/three/layout.ts        14 台设备三维坐标 + 六类机身尺寸 + 产线物料流顺序（唯一数据源）
-  src/three/builders.ts      程序化几何：厂房 / 产线色带 / 六类设备 / 滚筒 / 机械臂枢轴
+  src/three/builders.ts      程序化几何：厂房 / 产线色带 / 六类设备 / 滚筒 / 机械臂枢轴 / 合并后的灯与环
+  src/three/postfx.ts        后处理管线（Bloom / SMAA / OutputPass / ACES）
+  src/three/propLayout.ts    七类工业道具的摆放表（纯数据，10 条几何约束测试守着）
+  src/three/propBuilder.ts   道具几何与材质（全部走 InstancedMesh 或 mergeGeometries）
   src/three/lineTraffic.ts   一维队列推进算法（纯函数，不依赖 three，可单测）
   src/three/motion.ts        装配产线动画：物料 InstancedMesh 矩阵、滚筒自转、机械臂摆动
   src/three/SceneRoot.tsx    渲染循环、相机预设、射线拾取、状态材质切换、动画冻结
@@ -377,7 +385,7 @@ python -m pytest tests -v
 | `acceptance-batch2.mjs` | **24 / 24 通过**（4.2 批后连跑两次仍全过） |
 | `acceptance-motion.mjs` | **17 / 17 通过** |
 | `acceptance-ai.mjs` | **42 / 42 通过** |
-| 渲染开销 | 132 draw calls / 11,066 triangles（预算 150，新增 10 个来自物料与滚筒） |
+| 渲染开销 | 该值已过时：当前为 **场景 77 draw call**（不含阴影与后处理）/ 16,769 triangles，口径见 `docs/spec_phase4.md` §2.3 |
 | 产线闸门 | 4 条产线 × 3 台设备，闸门坐标全部落在色带内，带宽可容 8 个料位 |
 | 停机实测 | WS 断开后 `paused=true`，两次采样物料位置完全一致，恢复后自动续跑 |
 | 后端回归 | `pytest` **25 passed** |
