@@ -13,7 +13,7 @@ import { readStore, subscribeStore } from '../hooks/useTelemetry';
 import type { EffectiveState } from '../utils/status';
 import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, type DeviceVisual } from './builders';
 import { cutawaySides } from './envInterior';
-import { CAMERA_PRESETS, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
+import { CAMERA_PRESETS, DEFAULT_FOV, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
 import { createLabelRenderer } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
@@ -173,7 +173,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // 雾已移除（作者要求「不要迷雾」）：远景不再淡出，靠白底与阴影拉开层次。
     scene.fog = null;
 
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 400);
+    // R1.5 A 层：默认 FOV 45→60（作者指定），人视预设（WALK/AISLE）再各自加广角
+    const camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.5, 400);
     const preset = CAMERA_PRESETS.overview;
     camera.position.set(...preset.position);
 
@@ -335,6 +336,9 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       toPos: new THREE.Vector3(),
       fromTarget: new THREE.Vector3(),
       toTarget: new THREE.Vector3(),
+      // R1.5 A 层：FOV 随过渡一起缓动（人视机位 66/72°，俯视 60°），落到位正好是目标值
+      fromFov: DEFAULT_FOV,
+      toFov: DEFAULT_FOV,
     };
     let lastTransitionMs: number | null = null;
     let transitionSeq = 0;
@@ -348,6 +352,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       tween.toPos.set(...pose.position);
       tween.fromTarget.copy(controls.target);
       tween.toTarget.set(...pose.target);
+      tween.fromFov = camera.fov;
+      tween.toFov = pose.fov ?? DEFAULT_FOV;
       tween.midPos.lerpVectors(tween.fromPos, tween.toPos, 0.5);
       // 抬高量与两点距离成正比、封顶 10 米：够越过最高设备（2.6 m）外加安全余量
       tween.midPos.y += Math.min(10, tween.fromPos.distanceTo(tween.toPos) * 0.18);
@@ -444,13 +450,13 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     renderer.domElement.addEventListener('pointerup', onPointerUp);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
 
-    // ---------- 键位（D3）：1~5 切预设、R 复位、P 巡游。输入控件聚焦时不抢键 ----------
+    // ---------- 键位（D3，R1.5 扩到 7 个预设）：数字键切预设、R 复位、P 巡游。输入控件聚焦时不抢键 ----------
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
       const tag = (event.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       const key = event.key.toLowerCase();
-      if (key >= '1' && key <= '5') {
+      if (key >= '1' && key <= String(PRESET_ORDER.length)) {
         stopTour();
         moveTo(CAMERA_PRESETS[PRESET_ORDER[Number(key) - 1]]);
       } else if (key === 'r') {
@@ -586,6 +592,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
           w0 * tween.fromPos.z + w1 * tween.midPos.z + w2 * tween.toPos.z,
         );
         controls.target.lerpVectors(tween.fromTarget, tween.toTarget, eased);
+        camera.fov = tween.fromFov + (tween.toFov - tween.fromFov) * eased;
+        camera.updateProjectionMatrix();
         if (progress >= 1) {
           tween.active = false;
           lastTransitionMs = elapsed;

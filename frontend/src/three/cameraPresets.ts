@@ -3,16 +3,31 @@
 export interface CameraPose {
   position: [number, number, number];
   target: [number, number, number];
+  /**
+   * 该预设的垂直 FOV（度）。缺省用 DEFAULT_FOV。
+   * R1.5 A 层起支持逐预设 FOV：人视机位（WALK/AISLE）用广角制造"身临其境"，
+   * 俯视机位保持中焦避免边缘拉伸。改 FOV 后必须 updateProjectionMatrix。
+   */
+  fov?: number;
 }
 
+/** 全局默认 FOV。R1.5 A 层：45 → 60（作者指定，广角加大纵深感知） */
+export const DEFAULT_FOV = 60;
+
 /**
- * D3 起 5 个预设，`PRESET_ORDER` 的顺序即键位 1~5 的映射顺序。
+ * R1.5 起 7 个预设，`PRESET_ORDER` 的顺序即键位 1~7 的映射顺序。
  * DEVICE 的静态位姿取 CNC-01 特写（与 `focusPose(CNC-01)` 完全一致）：
  * 运行时 setPreset('DEVICE') 会改看当前选中设备，没有选中时落回这里。
- * LINE-A1：单条产线近景，斜上方看向整条 A1（x -34..-6, z -7.5）。
+ * LINE-A1：单条产线近景，斜上方看向整条 A1。
  */
 export const CAMERA_PRESETS = {
   overview: { position: [0, 36, 46], target: [0, 0, 0] },
+  // ---- R1.5 A 层：人视机位（作者指定）----
+  // WALK：人眼高度 1.68 m，站在 LINE-A1 起点（线西端 x=-34），视线朝 +x 沿产线纵深。
+  // FOV 72：产线纵深方向的透视夸张，站在原地看不完厂区边界才算尺度对了。
+  WALK: { position: [-34.5, 1.68, -7.5], target: [-14, 1.2, -7.5], fov: 72 },
+  // AISLE：站在中央走廊北端（z=-14），朝 +z 看通道纵深，人眼偏高 1.9 m，FOV 66。
+  AISLE: { position: [0, 1.9, -14], target: [0, 1.2, 14], fov: 66 },
   'WS-A': { position: [-20, 26, 34], target: [-20, 0, 0] },
   'WS-B': { position: [20, 26, 34], target: [20, 0, 0] },
   // D 批改成"车间内平视"：站在 A1 与中央通道之间（y=3），沿产线望向西北角。
@@ -24,8 +39,8 @@ export const CAMERA_PRESETS = {
 
 export type PresetKey = keyof typeof CAMERA_PRESETS;
 
-/** 预设固定顺序：键位 1~5 与巡游序列都按它走，不许乱。 */
-export const PRESET_ORDER: PresetKey[] = ['overview', 'WS-A', 'WS-B', 'LINE-A1', 'DEVICE'];
+/** 预设固定顺序：键位与巡游序列都按它走，不许乱。WALK/AISLE 排 overview 之后（作者指定）。 */
+export const PRESET_ORDER: PresetKey[] = ['overview', 'WALK', 'AISLE', 'WS-A', 'WS-B', 'LINE-A1', 'DEVICE'];
 
 /** 单设备聚焦：从东南上方看向设备腰部。 */
 export function focusPose(x: number, z: number): CameraPose {

@@ -17,6 +17,7 @@ import {
   FACTORY,
   FALLBACK_PLACEMENT,
   LINE_STRIPS,
+  extendedLine,
   POWER_STATION,
   WORKSHOPS,
   sizeKeyOf,
@@ -162,9 +163,11 @@ export function buildFactory(): FactoryBuild {
 
   const stripParts: THREE.BufferGeometry[] = [];
   for (const strip of LINE_STRIPS) {
-    const len = Math.abs(strip.x2 - strip.x1);
+    // R1.5 A 层：色带轨道延长 3 m 顶进墙内被截断（暗示产线延伸到画面外）；设备/道具仍按本体坐标
+    const ext = extendedLine(strip);
+    const len = Math.abs(ext.x2 - ext.x1);
     const geo = new THREE.BoxGeometry(len, 0.15, 1.2);
-    geo.translate((strip.x1 + strip.x2) / 2, 0.075, strip.z);
+    geo.translate((ext.x1 + ext.x2) / 2, 0.075, strip.z);
     stripParts.push(geo);
   }
 

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { INTERIOR, INTERIOR_COLORS, buildInterior, cutawaySides, windowOpenings } from './envInterior';
 import { ENV_BOUNDS } from './envLayout';
-import { LINE_STRIPS, WORKSHOPS } from './layout';
+import { DEVICE_LAYOUT, LINE_STRIPS, WORKSHOPS, extendedLine } from './layout';
 
 const { parts } = buildInterior();
 
@@ -110,8 +110,8 @@ describe('室内壳（D 批 R1）', () => {
     }
   });
 
-  it('踢脚线 0.8 m 高，两车间各 4 道（南墙让开门洞，仍是整道）', () => {
-    const skirts = parts.filter((p) => p.color === INTERIOR_COLORS.skirting);
+  it('踢脚线 0.8 m 高，两车间各 4 道（南墙让开门洞，仍是整道）；柱护脚同色但高 1m，按高度区分', () => {
+    const skirts = parts.filter((p) => p.color === INTERIOR_COLORS.skirting && p.sy === 0.8);
     expect(skirts).toHaveLength(WORKSHOPS.length * 4);
     for (const p of skirts) expect(p.sy).toBeCloseTo(0.8, 6);
   });
@@ -137,18 +137,43 @@ describe('室内壳（D 批 R1）', () => {
     for (const p of lamps) expect(p.y).toBeLessThan(INTERIOR.trussBottom);
   });
 
-  it('墙体不压产线色带（产线在车间内部，墙在周边）', () => {
-    for (const strip of LINE_STRIPS) {
-      const blocked = walls.filter((p) => {
-        const s = span(p);
-        return overlaps(s.x, [strip.x1, strip.x2]) && overlaps(s.z, [strip.z - 0.6, strip.z + 0.6]);
-      });
-      expect(blocked.length, `${strip.line_id} 被墙穿过`).toBe(0);
+  it('产线顶进墙内被截断（R1.5）：延长后的灯带端点落在东西墙厚度带内，且与南北墙零重叠', () => {
+    for (const ws of WORKSHOPS) {
+      for (const strip of LINE_STRIPS.filter((s) => s.workshop_id === ws.id)) {
+        const ext = extendedLine(strip);
+        const west = [ws.x - ws.sizeX / 2 - INTERIOR.wallThickness / 2, ws.x - ws.sizeX / 2 + INTERIOR.wallThickness / 2];
+        const east = [ws.x + ws.sizeX / 2 - INTERIOR.wallThickness / 2, ws.x + ws.sizeX / 2 + INTERIOR.wallThickness / 2];
+        // 端点进墙（墙带内）——被墙截断的视觉由不透明墙体保证
+        expect(ext.x1, `${strip.line_id} 西端没进墙`).toBeGreaterThanOrEqual(west[0]);
+        expect(ext.x1).toBeLessThanOrEqual(west[1]);
+        expect(ext.x2, `${strip.line_id} 东端没进墙`).toBeGreaterThanOrEqual(east[0]);
+        expect(ext.x2).toBeLessThanOrEqual(east[1]);
+        // 延长后的灯带与南北墙零重叠（不许斜穿出车间）
+        const lamp = { x: (ext.x1 + ext.x2) / 2, sx: ext.x2 - ext.x1, z: strip.z, sz: 0.34 };
+        const crossing = walls.filter((p) => {
+          const s = span(p);
+          return overlaps(s.x, [lamp.x - lamp.sx / 2, lamp.x + lamp.sx / 2]) && overlaps(s.z, [lamp.z - lamp.sz / 2, lamp.z + lamp.sz / 2]) && s.x[1] - s.x[0] > 0.5;
+        });
+        expect(crossing.length, `${strip.line_id} 被南北墙穿过`).toBe(0);
+      }
     }
   });
 
-  it('没有非盒体的意外形状（窗框/墙/桁架都应是盒）', () => {
-    expect(parts.filter((p) => !isBox(p))).toHaveLength(0);
+  it('设备与道具仍按色带本体布置（延长段只许用于绘制，不许带走设备）', () => {
+    for (const strip of LINE_STRIPS) {
+      for (const [id, d] of Object.entries(DEVICE_LAYOUT)) {
+        if (Math.abs(d.z - strip.z) > 0.6) continue;
+        if (Math.sign(d.x) !== Math.sign(strip.x1)) continue; // 排除另一车间的同 z 设备
+        expect(d.x, `${id} 应在色带本体 ${strip.x1}..${strip.x2} 内`).toBeGreaterThanOrEqual(strip.x1 - 1);
+        expect(d.x).toBeLessThanOrEqual(strip.x2 + 1);
+      }
+    }
+  });
+
+  it('没有非盒体的意外形状（墙系/柱列都应是盒；地面油渍与螺栓是有意用圆柱的，paint 组除外）', () => {
+    expect(parts.filter((p) => p.group !== 'paint' && !isBox(p))).toHaveLength(0);
+    // paint 组里只允许"贴地扁件"：box 或扁平圆柱（sy ≤ 0.02）
+    expect(parts.filter((p) => p.group === 'paint' && p.shape === 'cyl' && p.sy > 0.02)).toHaveLength(0);
   });
 });
 
@@ -199,5 +224,68 @@ describe('室外剖切（D 批 R1 追加）', () => {
   it('入场起点（场外西南）：只剖相邻的外侧墙', () => {
     const ids = cutawaySides({ x: -44.7, z: 14.5 });
     expect(ids).toEqual(['WS-A:west', 'WS-B:west']);
+  });
+});
+
+describe('R1.5 A 层：柱列与地面细节', () => {
+  // 护脚与踢脚线同色（作者指定都是 #1f2b3a），按尺寸区分：护脚 0.5×0.5、高 1
+  const isFoot = (p: (typeof parts)[number]) => p.sy === 1 && p.sx === 0.5 && p.sz === 0.5;
+  const colBody = parts.filter((p) => p.color === INTERIOR_COLORS.column);
+  const colFoot = parts.filter((p) => p.color === INTERIOR_COLORS.columnFoot && isFoot(p));
+
+  it('柱列：每车间 3 排 × 2 列 = 6 根（柱身 + 1m 护脚各一件，共 24 件）', () => {
+    expect(colBody).toHaveLength(WORKSHOPS.length * 6);
+    expect(colFoot).toHaveLength(WORKSHOPS.length * 6);
+    for (const p of [...colBody, ...colFoot]) {
+      expect(p.sx).toBeCloseTo(0.5, 6);
+      expect(p.sz).toBeCloseTo(0.5, 6);
+    }
+    for (const p of colBody) expect(p.sy).toBeCloseTo(INTERIOR.wallHeight - 1, 6);
+    for (const p of colFoot) expect(p.sy).toBeCloseTo(1, 6);
+    // 柱身坐护脚上：柱身 y 范围 1..8，护脚 0..1
+    for (const p of colBody) expect(p.y - p.sy / 2).toBeCloseTo(1, 6);
+    for (const p of colFoot) expect(p.y - p.sy / 2).toBeCloseTo(0, 6);
+  });
+
+  it('柱列不压产线色带，且离设备最内排 ≥ 1m', () => {
+    for (const strip of LINE_STRIPS) {
+      const blocked = [...colBody, ...colFoot].filter((p) => {
+        const s = span(p);
+        return overlaps(s.x, [strip.x1, strip.x2]) && overlaps(s.z, [strip.z - 0.6, strip.z + 0.6]);
+      });
+      expect(blocked.length, `${strip.line_id} 被柱子压住`).toBe(0);
+    }
+    for (const [id, d] of Object.entries(DEVICE_LAYOUT)) {
+      for (const p of [...colBody, ...colFoot]) {
+        const s = span(p);
+        const inX = d.x + 0.5 > s.x[0] && d.x - 0.5 < s.x[1];
+        const inZ = d.z + 0.5 > s.z[0] && d.z - 0.5 < s.z[1];
+        expect(inX && inZ, `${id} 与柱 (${p.x},${p.z}) 净距不足`).toBe(false);
+      }
+    }
+  });
+
+  it('地面细节全在 paint 组：砖缝 36、盖板 3+格栅 12、油渍 6 片、螺栓 12 颗', () => {
+    const paint = parts.filter((p) => p.group === 'paint');    const seam = paint.filter((p) => p.color === INTERIOR_COLORS.seam);
+    const grate = paint.filter((p) => p.color === INTERIOR_COLORS.grate);
+    const rib = paint.filter((p) => p.color === INTERIOR_COLORS.grateRib);
+    const stain = paint.filter((p) => p.color === INTERIOR_COLORS.stain);
+    const stain2 = paint.filter((p) => p.color === INTERIOR_COLORS.stain2);
+    const bolt = paint.filter((p) => p.color === INTERIOR_COLORS.bolt);
+    expect(seam).toHaveLength(WORKSHOPS.length * 18);
+    expect(grate).toHaveLength(3);
+    expect(rib).toHaveLength(12);
+    expect(stain.length).toBe(3);
+    expect(stain2.length).toBe(3);
+    expect(bolt).toHaveLength(12);
+    // 都贴地（y ∈ (0, 0.05)），不飘不埋
+    for (const p of [...seam, ...grate, ...rib, ...stain, ...stain2, ...bolt]) {
+      expect(p.y).toBeGreaterThan(0);
+      expect(p.y).toBeLessThan(0.05);
+    }
+  });
+
+  it('柱列与地面细节不参与室外剖切', () => {
+    for (const p of [...colBody, ...colFoot]) expect(p.cut).toBeUndefined();
   });
 });

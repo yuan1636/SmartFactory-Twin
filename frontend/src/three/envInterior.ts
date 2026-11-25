@@ -14,7 +14,7 @@
  *     反向再取值会形成运行时循环依赖（`import type` 已在编译期擦除，不受影响）。
  */
 
-import { LINE_STRIPS, WORKSHOPS, type WorkshopSpec } from './layout';
+import { LINE_STRIPS, WORKSHOPS, extendedLine, type WorkshopSpec } from './layout';
 import type { EnvPart } from './envLayout';
 
 /** 作者给定尺寸（单位米） */
@@ -54,6 +54,15 @@ export const INTERIOR_COLORS = {
   purlin: 0x424b56,
   // 与 envLayout.ENV_COLORS.lamp 同值：灯带沿用既有 emissive 组
   lamp: 0xaac7e4,
+  // ---- R1.5 A 层：柱列与地面细节（人眼高度 3 m 内可见的部件）----
+  column: 0x3a4f68,
+  columnFoot: 0x1f2b3a,
+  seam: 0x242e3a,
+  grate: 0x121a24,
+  grateRib: 0x2a3542,
+  stain: 0x0b1016,
+  stain2: 0x10171f,
+  bolt: 0x8b9299,
 } as const;
 
 type Group = EnvPart['group'];
@@ -130,6 +139,27 @@ function doorUnit(out: EnvPart[], ws: WorkshopSpec, z: number, cut: string): voi
   out.push(box('metal', INTERIOR_COLORS.shutter, ws.x, H + 0.2, z, W, 0.4, 0.34, cut));
 }
 
+/**
+ * 混凝土柱列（R1.5 A 层，作者指定）：每车间 3 排（z=-10/0/10）× 2 列（x=±10），
+ * 0.5×0.5 m、总高 8 m；下 1 m 护脚 #1f2b3a，柱身 #3a4f68。并入 matte 组。
+ * 不参与室外剖切（柱列是尺度参照，任何机位都该看得见）；设备最内排在 z=±7.5，
+ * 柱排在 z=±10/0，与设备净距 ≥1 m。
+ */
+function columns(ws: WorkshopSpec): EnvPart[] {
+  const out: EnvPart[] = [];
+  const S = 0.5;
+  const foot = 1;
+  for (const dz of [-10, 0, 10]) {
+    for (const dx of [-10, 10]) {
+      const x = ws.x + dx;
+      const z = ws.z + dz;
+      out.push(box('matte', 0x3a4f68, x, foot + (INTERIOR.wallHeight - foot) / 2, z, S, INTERIOR.wallHeight - foot, S));
+      out.push(box('matte', 0x1f2b3a, x, foot / 2, z, S, foot, S));
+    }
+  }
+  return out;
+}
+
 /** 屋顶桁架：沿 x 每 6 m 一榀，弦杆 + 竖腹杆用 0.12 方管，另加 3 道纵向檩条 */
 function trusses(ws: WorkshopSpec): EnvPart[] {
   const out: EnvPart[] = [];
@@ -150,6 +180,65 @@ function trusses(ws: WorkshopSpec): EnvPart[] {
   }
   for (const dz of [-10, 0, 10]) {
     out.push(box('metal', INTERIOR_COLORS.purlin, ws.x, INTERIOR.trussTop + 0.06, ws.z + dz, ws.sizeX - 3, 0.14, 0.14));
+  }
+  return out;
+}
+
+/**
+ * 地面细节（R1.5 A 层，作者指定"人眼高度 3 m 内可见"）：全部并入 paint 组
+ * （MeshBasic 顶点色，所见即所得，不参与光照）。四类：
+ *  1. 地砖缝分格线：每 3 m 一道，铺满车间内部（0.05 宽，颜色略亮于地面）；
+ *  2. 排水沟盖板：3 块（两车间线头旁 + 中央走廊），带 4 根格栅条；
+ *  3. 油渍贴花：3 处，各两片叠放的深色扁圆柱；
+ *  4. 地面膨胀螺栓：12 颗，集中在 WALK 机位脚下的线头区与走廊。
+ * y 高度分层（0.004~0.026）避免与产线色带/通道漆 z-fighting。
+ */
+function floorDetails(): EnvPart[] {
+  const out: EnvPart[] = [];
+  const { seam, grate, grateRib, stain, stain2, bolt } = INTERIOR_COLORS;
+
+  // 1. 砖缝：车间内部每 3 m 一道（经纬各 ~9 道 × 2 车间）
+  for (const ws of WORKSHOPS) {
+    for (const dx of [-12, -9, -6, -3, 0, 3, 6, 9, 12]) {
+      out.push(box('paint', seam, ws.x + dx, 0.006, ws.z, 0.05, 0.004, ws.sizeZ - 2.5));
+    }
+    for (const dz of [-12, -9, -6, -3, 0, 3, 6, 9, 12]) {
+      out.push(box('paint', seam, ws.x, 0.006, ws.z + dz, ws.sizeX - 2.5, 0.004, 0.05));
+    }
+  }
+
+  // 2. 排水沟盖板：1.4×0.9 底板 + 4 根横格栅
+  const grates: Array<[number, number]> = [
+    [-33.2, -3.2], // WS-A，LINE-A1 线头旁（WALK 机位脚下可见）
+    [10.8, -3.2], // WS-B，LINE-B1 线头旁
+    [1.9, 6.5], // 中央走廊
+  ];
+  for (const [gx, gz] of grates) {
+    out.push(box('paint', grate, gx, 0.012, gz, 1.4, 0.016, 0.9));
+    for (let i = 0; i < 4; i += 1) {
+      out.push(box('paint', grateRib, gx - 0.45 + i * 0.3, 0.024, gz, 0.09, 0.006, 0.9));
+    }
+  }
+
+  // 3. 油渍：两片错位扁圆叠出"不规则"轮廓
+  const stains: Array<[number, number]> = [
+    [-28.6, -4.6], // CNC-01 旁
+    [-1.4, -8.2], // 走廊北段
+    [17.8, 4.8], // ROB-04 旁
+  ];
+  for (const [sx, sz] of stains) {
+    out.push({ group: 'paint', shape: 'cyl', color: stain, x: sx, y: 0.005, z: sz, sx: 0.62, sy: 0.004, sz: 0.62 });
+    out.push({ group: 'paint', shape: 'cyl', color: stain2, x: sx + 0.25, y: 0.006, z: sz + 0.18, sx: 0.34, sy: 0.004, sz: 0.34 });
+  }
+
+  // 4. 膨胀螺栓：r 0.035 的小圆头，线头区 8 颗 + 走廊 4 颗
+  const bolts: Array<[number, number]> = [
+    [-34.2, -5.3], [-34.2, -9.7], [-33.4, -5.3], [-33.4, -9.7],
+    [-36.2, -5.3], [-36.2, -9.7], [-31.4, -4.4], [-31.4, -10.6],
+    [-1.9, -10.5], [1.9, -10.5], [-1.9, 10.5], [1.9, 10.5],
+  ];
+  for (const [bx, bz] of bolts) {
+    out.push({ group: 'paint', shape: 'cyl', color: bolt, x: bx, y: 0.01, z: bz, sx: 0.035, sy: 0.02, sz: 0.035 });
   }
   return out;
 }
@@ -217,21 +306,28 @@ export function buildInterior(): InteriorResult {
       }
     }
 
+    // ---- 混凝土柱列（R1.5 A 层）----
+    parts.push(...columns(ws));
+
     // ---- 屋架 ----
     parts.push(...trusses(ws));
   }
 
-  // ---- 灯带（沿用 emissive 组，5 道）----
+  // ---- 地面细节（R1.5 A 层，paint 组）----
+  parts.push(...floorDetails());
+
+  // ---- 灯带（沿用 emissive 组，5 道）；灯管同样延长 3 m 顶进墙内，与地面色带一致 ----
   for (const strip of LINE_STRIPS) {
-    const mid = (strip.x1 + strip.x2) / 2;
-    const len = Math.abs(strip.x2 - strip.x1);
+    const ext = extendedLine(strip);
+    const mid = (ext.x1 + ext.x2) / 2;
+    const len = Math.abs(ext.x2 - ext.x1);
     parts.push(box('emissive', INTERIOR_COLORS.lamp, mid, INTERIOR.lampY, strip.z, len, 0.12, 0.34));
   }
   parts.push(box('emissive', INTERIOR_COLORS.lamp, 0, INTERIOR.lampY, 0, 0.34, 0.12, WORKSHOPS[0].sizeZ - 1));
 
   return {
     parts,
-    kinds: ['interior-walls', 'skirting', 'pilasters', 'trusses', 'light-strips', 'window-bays', 'roller-door'],
+    kinds: ['interior-walls', 'skirting', 'pilasters', 'columns', 'floor-detail', 'trusses', 'light-strips', 'window-bays', 'roller-door'],
   };
 }
 

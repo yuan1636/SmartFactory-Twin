@@ -77,6 +77,18 @@ export const LINE_STRIPS: LineStripSpec[] = [
 ];
 
 /**
+ * R1.5 A 层：产线**视觉体**（地面色带轨道、天花灯带）两端各延长 3 m 顶进外墙内，
+ * 被墙体截断——暗示产线延伸到画面之外。设备坐标、道具、动画路径仍按 LINE_STRIPS
+ * 本体布置（动它会把上料架/下料滑台一起搬进墙里），所以只给"画"的地方用 extendedLine。
+ */
+export const LINE_EXTEND = 3;
+
+/** 延长后的色带区间：只许用于绘制（色带/灯带），不许用于摆设备/道具/标签 */
+export function extendedLine(s: LineStripSpec): { x1: number; x2: number } {
+  return { x1: s.x1 - LINE_EXTEND, x2: s.x2 + LINE_EXTEND };
+}
+
+/**
  * 产线 → 设备，**顺序即物料流方向**（与种子数据 seed.sql 的 line_id 一致）。
  * 供产线运行动画使用：设备是这条线上的"闸门"，顺序错了物料会逆流。
  * AIR-01 / PUMP-01 属动力站，不在任何产线上。
