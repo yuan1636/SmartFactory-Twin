@@ -32,11 +32,13 @@
 | `docs/acceptance_phase2.md` | 第 2 阶段验收回归记录（7.1～7.16 逐条结论 + 命令 + 实际输出） | 已完成：14 通过 / 0 不通过 / 1 未验证（7.15 真 Ctrl+C 待人工按一次） |
 | `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v1.1 生效**（v1.0 于 2026-11-24 冻结；同日增补 §6.7 产线运行动画），是第 3 阶段唯一施工依据 |
 | `docs/acceptance_phase3.md` | 第 3 阶段验收记录（Batch 1 / Batch 2 / 第 3 批产线运行动画） | 10.1 八条与动画 17 项全过；Batch 2 的 24 项复跑仍全过；保留人工项：动效观感、真实帧率、滚筒停转样本 |
-| `docs/spec_phase4.md` | 第 4 阶段实现规格 | **v4.0 生效**（2026-11-25 目标改为**三维界面展示与演示能力**：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结）；偏差 D-11 ~ D-54；v1.0 / v1.1 / v2.0 归档在 `docs/archive/` |
+| `docs/spec_phase4.md` | 第 4 阶段实现规格 | **v4.0 生效**（2026-11-25 目标改为**三维界面展示与演示能力**：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结）；§10 是设备建模 v2 判据；偏差 D-11 ~ D-72；v1.0 / v1.1 / v2.0 归档在 `docs/archive/` |
+| `docs/acceptance_phase4_d.md` | D 批（车间室内化 + 设备建模 v2 + 顶部清理）逐批验收 | R1 / R1.5 A / R2 / R3 / 顶部清理已交付；R1.5 B 未开始 |
+| `PROGRESS.md` | 交接与进度（换窗口先读） | 已同步到 `c6bd558` |
 | `docs/acceptance_phase4.md` | 第 4 阶段验收记录（按批） | 4.1（训练）、4.2（后端 + AI 页）、4.3（TimescaleDB 迁移）、4.4（压缩与查询对比）、**D1（视觉基调）、D2（工业道具）** 已完成；D2 仅缺盲测 |
 | `ml/` | 第 4 阶段 AI 模型（common 公共件 + anomaly_detection） | 异常检测主模型 PR-AUC 0.9859 / Recall 0.9830 / Precision 0.9063（测试集 127,206 行，时间切分最后 15%）；三分类归因宏 F1 1.0（数据集事实，非泛化能力） |
 | `requirements-ml.txt` | ml 依赖（与 `requirements.txt` 分开） | 4 个直接依赖版本写死（**已删 `kafka-python`**）；间接带 scipy / threadpoolctl（偏差 D-11） |
-| `frontend/` | 前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | 五个可用页齐全 + 三维产线运行动画 + AI 页模型输出区；`npm run test` **96 passed** |
+| `frontend/` | 前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | 五个可用页齐全（`/overview` 为纯三维展示页）+ 三维产线运行动画 + AI 页模型输出区；14 台设备全部为设备建模 v2；`npm run test` **167 passed** |
 | `scripts/` | `start-all.ps1`（一键起库/后端/模拟器/前端）、`acceptance-batch2.mjs`（CDP 页面级 24 项）、`acceptance-motion.mjs`（产线动画 17 项）、`acceptance-ai.mjs`（AI 页 42 项）、`shot.mjs`（截当前页）、`lib/cdp.mjs`（共用 CDP 底座） | 五者均已实测跑通 |
 | `tests/` | 测试网（pytest + httpx，25 个用例：`test_phase2_api.py` / `test_ml_api.py`） | **25 passed**；依赖在 `requirements-dev.txt`，不进 `requirements.txt`；**跑之前先停 uvicorn**（两进程抢写告警表会让冷却用例随机失败） |
 
@@ -83,7 +85,11 @@
   - 4.1：回填 7 天（423 万行）→ 78 维特征 → 84.8 万行训练集 → 四模型对比；主模型 XGBoost PR-AUC 0.9859 / Recall 0.9830，对比阈值规则 0.9098 / 0.8028；随机切分对照虚高 +0.0123。`evaluate.py` 22 项自检全过（"时间不重叠"断言抓到一个真 bug，D-17）。
   - 4.2：`app/services/ml_anomaly.py` + `/ml/*` 三接口 + `model_versions` / `anomaly_scores` 两表 + AI 页模型输出区；`acceptance-ai.mjs` 42 项。红线：**AI 页每个数字都能追到一次真实返回**。
   - 4.3 / 4.4：镜像换 `timescale/timescaledb:2.17.2-pg16`，`device_telemetry` 转 hypertable，迁移前后 **4,570,704 行完全一致**；压缩后 1,001 MB → **234 MB**（总量 3.97:1 / 表口径 6.63:1）；查询收益分类型——扫描类 -31%~-47%，点查类基本不变。顺带修掉接口真 bug D-34（回显窗口截到整秒导致同窗重放差 1 行）。
-- **当前阶段：第 4 阶段 B（展示改造），D0 / D1 / D2 已交付（规格 v4.0）。**
+- **当前阶段：第 4 阶段 B（展示改造），D0 / D1 / D2 / D3 + 追加批 + D 批 R1 / R1.5 A / R2 / R3 / 顶部清理已交付（规格 v4.0）。**
+  - **R2 / R3 设备建模 v2**：14 台设备全部换成程序化部件表（CNC 28 类、其余 10~14 类），按顶点色并成每台 1~3 个 mesh；场景 draw call 84 → **57**、整链 101。滚筒自转与机械臂摆动接口保留，motion 17/17。验收 `scripts/acceptance-device.mjs` **54/54**。
+  - **顶部清理（作者 2026-11-25 晚要求）**：删 D2 架空圆管、屋架约 280 根深色方管、天花桥架与竖杆；保留 5 道灯带与柱列。D2 道具类别下限 7 → **6**（偏差 D-72）。
+  - **D3 验收脚本已过期**：R1.5 A 把预设 5 → 7，`acceptance-d3.mjs` 仍写死 5，导致 3 项断言失效；14/14 点击命中复测通过，与设备建模无关。下一批同步脚本。
+  - 下一步：D4 剩余（粒子/光斑）→ D5 收尾 → D6 性能与演示物料。
   - **目标已转向展示**：判据是「看得懂、看得像、点得动、演得住」，不再追求数据一致性。数据一致性验证 / 工件身份化 / 后端仿真状态机**不做**；Kafka 不接；故障风险与产量预测**取消**；`app/`、`database/` **冻结**（除修 bug）。
   - D0 现状体检：20 条「假 / 空 / 卡」问题清单 + 基线（144.9 fps / 108 draw call / 首屏 562 ms），见 `docs/audit_d0.md`。
   - D1 视觉基调：后处理（ACES + Bloom + OutputPass + SMAA，零新增依赖）+ 程序化地面/墙板贴图 + 雾；场景 120 draw call、9/9 验收。
