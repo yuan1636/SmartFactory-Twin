@@ -70,11 +70,13 @@ function makeWallTexture(): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('无法创建 canvas 2d 上下文，墙面贴图生成失败');
 
-  // 上亮下暗的竖向渐变，模拟高侧窗带来的天光衰减
+  // 上亮下暗的竖向渐变，模拟高侧窗带来的天光衰减。
+  // 基色比 D1 提亮约 25%：D1 那版在车间内部抬头看时，y>3 m 的墙是纯黑的（像空箱子），
+  // 因为半球光对竖直法线的贡献本就很低，再乘深色贴图就归零了。
   const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, '#28384a');
-  grad.addColorStop(0.55, '#1f2b3a');
-  grad.addColorStop(1, '#16202b');
+  grad.addColorStop(0, '#3a4f68');
+  grad.addColorStop(0.55, '#2c3b4f');
+  grad.addColorStop(1, '#1f2b3a');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
 

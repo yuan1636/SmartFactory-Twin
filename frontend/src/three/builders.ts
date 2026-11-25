@@ -21,6 +21,7 @@ import {
   sizeKeyOf,
 } from './layout';
 import { createMaterials, disposeMaterials, RING_BRIGHTNESS, type SceneMaterials } from './materials';
+import { buildProps } from './propBuilder';
 
 export interface DeviceVisual {
   group: THREE.Group;
@@ -71,6 +72,8 @@ export interface FactoryBuild {
   materials: SceneMaterials;
   /** 合并后的状态灯与光环（D2 合批） */
   lights: StatusLights;
+  /** 已建立的工业道具类别（D2 验收断言"≥7 类"读它，不数 mesh） */
+  propKinds: string[];
   /** 输送机滚筒（按 device_id） */
   rollers: Map<string, RollerRig>;
   /** 机器人摆动枢轴（按 device_id） */
@@ -446,13 +449,20 @@ export function buildFactory(): FactoryBuild {
     },
   };
 
+  // ---------- 工业道具（D2）----------
+  // 单独一个 builder 管自己的材质与贴图，避免 SceneMaterials 无限膨胀；
+  // 但挂在同一个 root 下，dispose 时一起走。
+  const props = buildProps();
+  root.add(props.root);
+
   const dispose = () => {
     for (const geo of geometries) geo.dispose();
     grid.dispose?.();
+    props.dispose();
     disposeMaterials(materials);
   };
 
-  return { root, devices, materials, lights, rollers, arms, dispose };
+  return { root, devices, materials, lights, propKinds: props.kinds, rollers, arms, dispose };
 }
 
 /** 坐标表里没有的设备：堆到动力站旁并在控制台报警，不静默跳过（3.3）。 */

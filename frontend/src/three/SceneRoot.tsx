@@ -78,6 +78,8 @@ declare global {
       };
       /** 按名称前缀分组统计可见绘制体，用来回答"这 120 次画在什么上面"（D2 合批的依据与证据） */
       breakdown: () => Array<{ kind: string; meshes: number; triangles: number }>;
+      /** 已建立的工业道具类别 */
+      propKinds: () => string[];
     };
   }
 }
@@ -514,6 +516,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         profile: () => profile(),
         /** 按名称前缀分组，回答"这些 draw call 花在什么上面"（D2 合批的依据） */
         breakdown: () => breakdown(),
+        /** 已建立的工业道具类别（D2 断言"≥7 类"） */
+        propKinds: () => build.propKinds,
         /** 场景自身 draw call，可选是否含阴影（D2 的 ≤100 按「不含阴影」判） */
         measureSceneCalls: (withShadows?: boolean) => measureSceneCalls(withShadows ?? false),
         deviceStates: () => {
