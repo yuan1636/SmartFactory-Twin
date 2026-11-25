@@ -166,7 +166,9 @@ const main = async () => {
     check(`${name} 非空白`, bytes > 40000 && luma >= MIN_LUMA, `${w}×${h}, ${(bytes / 1024).toFixed(0)} KB, 平均亮度 ${luma}`);
   }
 
-  const errors = JSON.parse(await session.evaluate('JSON.stringify(window.__envErrors)'));
+  // 开发期 HMR 重载会清掉脚本挂在 window 上的收集器；读成 undefined 时按"无异常"处理，
+  // 但不要直接 JSON.parse(undefined) 把整轮验收炸掉（真实异常在变量存在时仍会被断言抓到）。
+  const errors = JSON.parse(await session.evaluate('JSON.stringify(window.__envErrors ?? [])'));
   check('全程无页面运行时异常', errors.length === 0, errors.length ? errors.slice(0, 3).join(' | ') : '0 条');
 
   process.exit(summarize() === 0 ? 0 : 1);

@@ -116,25 +116,22 @@ describe('室内壳（D 批 R1）', () => {
     for (const p of skirts) expect(p.sy).toBeCloseTo(0.8, 6);
   });
 
-  it('桁架每 6 m 一榀：每车间 6 榀（5 跨），弦杆+腹杆都是 0.12 方管并落在 metal 组', () => {
-    const tubes = parts.filter((p) => p.color === INTERIOR_COLORS.truss && p.group === 'metal');
-    // 每榀 = 上下弦 2 + 腹杆 21 = 23 件
-    expect(tubes).toHaveLength(WORKSHOPS.length * 6 * 23);
-    const xs = [...new Set(tubes.map((p) => Number(p.x.toFixed(2))))].sort((a, b) => a - b);
-    // 每车间 6 个 x 位置，间距 6 m
-    expect(xs.length).toBe(12);
-    for (let i = 1; i < 6; i += 1) expect(xs[i] - xs[i - 1]).toBeCloseTo(6, 6);
+  it('屋架杆件已按作者要求整组删除（2026-11-25 晚）：metal 组 y>7 必须为空', () => {
+    // 原实现每车间 6 榀、每榀 23 根方管，两个车间约 280 根，人眼机位下是一片密网。
+    // 这条是反向守卫：谁把深色杆件加回来，测试立刻失败。
+    const tubes = parts.filter((p) => p.group === 'metal' && p.y > 7);
+    expect(tubes).toHaveLength(0);
   });
 
-  it('所有墙/桁架都按顶点色并进既有组，没有新增材质组', () => {
+  it('所有墙件都按顶点色并进既有组，没有新增材质组', () => {
     const groups = new Set(parts.map((p) => p.group));
     for (const g of groups) expect(['matte', 'metal', 'paint', 'emissive', 'glass']).toContain(g);
   });
 
-  it('灯带 5 道，且吊在桁架下弦之下（不被檩条压住）', () => {
+  it('灯带 5 道，标高由 lampY 独立定义（屋架删除后不再依赖下弦高度）', () => {
     const lamps = parts.filter((p) => p.group === 'emissive');
     expect(lamps).toHaveLength(LINE_STRIPS.length + 1);
-    for (const p of lamps) expect(p.y).toBeLessThan(INTERIOR.trussBottom);
+    for (const p of lamps) expect(p.y).toBe(INTERIOR.lampY);
   });
 
   it('产线顶进墙内被截断（R1.5）：延长后的灯带端点落在东西墙厚度带内，且与南北墙零重叠', () => {
@@ -184,9 +181,9 @@ describe('室外剖切（D 批 R1 追加）', () => {
     const marked = parts.filter((p) => p.cut);
     expect(marked.length).toBeGreaterThan(0);
     for (const p of marked) expect(p.cut, `${p.group}@(${p.x},${p.z})`).toMatch(CUT_RE);
-    // 包柱与桁架不许被剖（车间轮廓与顶盖感靠它们）
+    // 包柱不许被剖（车间轮廓靠它）；屋架已删，顶部自然也不该有可剖的 metal 件
     expect(parts.filter((p) => p.color === INTERIOR_COLORS.pilaster && p.cut)).toHaveLength(0);
-    expect(parts.filter((p) => p.color === INTERIOR_COLORS.truss && p.cut)).toHaveLength(0);
+    expect(parts.filter((p) => p.group === 'metal' && p.y > 7 && p.cut)).toHaveLength(0);
   });
 
   it('每个车间四面各有剖切组：墙、窗框、玻璃、踢脚线、门导轨都跟着同组走', () => {

@@ -173,47 +173,11 @@ export function buildTrays(): TraySpec[] {
 }
 
 // ---------------------------------------------------------------- 管道
-
-export interface PipeSpec {
-  axis: 'x' | 'y' | 'z';
-  x: number;
-  y: number;
-  z: number;
-  length: number;
-  radius: number;
-}
-
-/**
- * 车间内架空管廊：**每车间只留一根**沿 X 的主管道（走在 z = +5，即两条产线之间的空地），
- * 两端各一根落地立管。
- * 为什么减量（作者 2026-11-25）：原来两侧各一根（共 4 根主管），从斜侧机位看正好横在
- * 设备与相机之间，"管道比设备还显眼"。留一根足够表达"这是有管网的厂房"，其余遮挡全部去掉。
- */
-export const PIPE_HEIGHT = 6.2;
-export const PIPE_RADIUS = 0.3;
-/** 主管到车间中心的横向距离：产线在 ±7.5，取 5 让管子正好压在产线与通道之间 */
-export const PIPE_OFFSET = 5;
-
-export function buildPipes(): PipeSpec[] {
-  const pipes: PipeSpec[] = [];
-  for (const ws of WORKSHOPS) {
-    const z = ws.z + PIPE_OFFSET;
-    // 主管：贯穿车间东西
-    pipes.push({ axis: 'x', x: ws.x, y: PIPE_HEIGHT, z, length: ws.sizeX - 1.2, radius: PIPE_RADIUS });
-    // 两端落地立管，让主管看起来是"接到设备上的"而不是浮在空中
-    for (const sx of [-1, 1]) {
-      pipes.push({
-        axis: 'y',
-        x: ws.x + sx * (ws.sizeX / 2 - 1.2),
-        y: PIPE_HEIGHT / 2,
-        z,
-        length: PIPE_HEIGHT,
-        radius: PIPE_RADIUS * 0.75,
-      });
-    }
-  }
-  return pipes;
-}
+//
+// 作者 2026-11-25 晚要求「天花板的管道都去掉，影响观感」。原实现是每车间一根
+// 贯穿东西的圆管（y=6.2）+ 两端落地立管，D2 的第 6 类道具。数据、几何、材质、
+// 验收断言一并删除，不留空类别；改回管网须同步改 propBuilder.ts、
+// propLayout.test.ts、scripts/acceptance-d2.mjs 与 docs/spec_phase4.md 偏差 D-72。
 
 // ---------------------------------------------------------------- 货架
 

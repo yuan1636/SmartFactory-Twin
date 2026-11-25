@@ -17,7 +17,8 @@ const SCENE_BUDGET = 100;
 const MIN_FPS = 50;
 const MIN_LUMA = 6; // 平均亮度低于 6 基本就是黑屏（D0 实测正常值约 29）
 
-const REQUIRED_KINDS = ['plinth', 'railing', 'hazard', 'tray', 'pipe', 'rack', 'sign'];
+// pipe 于 2026-11-25 晚按作者要求整组删除（天花板管道影响观感），类别下限 7 → 6，见偏差 D-72
+const REQUIRED_KINDS = ['plinth', 'railing', 'hazard', 'tray', 'rack', 'sign'];
 const SHOTS = ['01_overview', '02_ws_a', '03_ws_b', '04_device', '05_line', '06_eye_level'];
 
 const FPS_SCRIPT = `
@@ -93,7 +94,8 @@ const main = async () => {
   for (const kind of REQUIRED_KINDS) {
     check(`道具类别包含 ${kind}`, kinds.includes(kind), kinds.includes(kind) ? 'ok' : `实际 [${kinds.join(',')}]`);
   }
-  check('道具类别 ≥7', kinds.length >= 7, `实际 ${kinds.length} 类`);
+  check('道具类别 ≥6', kinds.length >= 6, `实际 ${kinds.length} 类`);
+  check('天花板管道已移除（不许悄悄加回来）', !kinds.includes('pipe'), `实际 [${kinds.join(',')}]`);
 
   check(`场景 draw call ≤ ${SCENE_BUDGET}`, prof.sceneCalls <= SCENE_BUDGET, `实际 ${prof.sceneCalls}`);
   const sum = prof.sceneCalls + prof.shadowCalls + prof.postPasses;
@@ -101,7 +103,7 @@ const main = async () => {
 
   // 道具只应占个位数到十几次数：如果哪天有人"一根栏杆一个 mesh"，这条会炸
   const propRow = rows.find((r) => r.kind === 'prop');
-  check('道具 draw call ≤ 14（7 类道具靠 InstancedMesh/合并压到个位数）',
+  check('道具 draw call ≤ 14（6 类道具靠 InstancedMesh/合并压到个位数）',
     !!propRow && propRow.meshes <= 14, propRow ? `实际 ${propRow.meshes}` : '分组里没有 prop');
 
   check(`fps 中位 ≥ ${MIN_FPS}`, fps.fpsMedian >= MIN_FPS, `实际 ${fps.fpsMedian}`);

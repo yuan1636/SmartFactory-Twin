@@ -33,33 +33,27 @@ export const INTERIOR = {
   windowWidth: 2,
   windowSill: 4.5,
   windowHeight: 1.5,
-  /** 窗框/桁架方管 */
+  /** 窗框方管截面 */
   frame: 0.12,
-  trussSpacing: 6,
-  /** 桁架上下弦高度 */
-  trussTop: 8.35,
-  trussBottom: 7.55,
-  /** 灯带吊在桁架下弦之下 */
+  /** 灯带标高：屋架删除后独立定义，不再挂在桁架下弦之下 */
   lampY: 7.42,
 } as const;
 
 /** 墙面配色（作者给定） */
 export const INTERIOR_COLORS = {
-  wall: 0x2c3b4f,
+  wall: 0x8f99a3,
   skirting: 0x1f2b3a,
-  pilaster: 0x101a26,
-  frame: 0x4a5563,
-  shutter: 0x2a3543,
-  truss: 0x4b5561,
-  purlin: 0x424b56,
+  pilaster: 0x57606a,
+  frame: 0x6e7883,
+  shutter: 0x5b656f,
   // 与 envLayout.ENV_COLORS.lamp 同值：灯带沿用既有 emissive 组
   lamp: 0xaac7e4,
   // ---- R1.5 A 层：柱列与地面细节（人眼高度 3 m 内可见的部件）----
-  column: 0x3a4f68,
+  column: 0xa6afb8,
   columnFoot: 0x1f2b3a,
-  seam: 0x242e3a,
+  seam: 0x3a424a,
   grate: 0x121a24,
-  grateRib: 0x2a3542,
+  grateRib: 0x333c44,
   stain: 0x0b1016,
   stain2: 0x10171f,
   bolt: 0x8b9299,
@@ -153,36 +147,20 @@ function columns(ws: WorkshopSpec): EnvPart[] {
     for (const dx of [-10, 10]) {
       const x = ws.x + dx;
       const z = ws.z + dz;
-      out.push(box('matte', 0x3a4f68, x, foot + (INTERIOR.wallHeight - foot) / 2, z, S, INTERIOR.wallHeight - foot, S));
-      out.push(box('matte', 0x1f2b3a, x, foot / 2, z, S, foot, S));
+      out.push(box('matte', INTERIOR_COLORS.column, x, foot + (INTERIOR.wallHeight - foot) / 2, z, S, INTERIOR.wallHeight - foot, S));
+      out.push(box('matte', INTERIOR_COLORS.columnFoot, x, foot / 2, z, S, foot, S));
     }
   }
   return out;
 }
 
-/** 屋顶桁架：沿 x 每 6 m 一榀，弦杆 + 竖腹杆用 0.12 方管，另加 3 道纵向檩条 */
-function trusses(ws: WorkshopSpec): EnvPart[] {
-  const out: EnvPart[] = [];
-  const f = INTERIOR.frame;
-  const span = ws.sizeZ - 1;
-  const count = Math.round((ws.sizeX - 4) / INTERIOR.trussSpacing); // 34 m -> 5 跨
-  const first = ws.x - (count * INTERIOR.trussSpacing) / 2;
-  for (let k = 0; k <= count; k += 1) {
-    const x = first + k * INTERIOR.trussSpacing;
-    out.push(box('metal', INTERIOR_COLORS.truss, x, INTERIOR.trussTop, ws.z, f, f, span));
-    out.push(box('metal', INTERIOR_COLORS.truss, x, INTERIOR.trussBottom, ws.z, f, f, span));
-    // 竖腹杆：约每 1.45 m 一根（21 根）
-    const webs = 20;
-    for (let i = 0; i <= webs; i += 1) {
-      const z = ws.z - span / 2 + (i * span) / webs;
-      out.push(box('metal', INTERIOR_COLORS.truss, x, (INTERIOR.trussTop + INTERIOR.trussBottom) / 2, z, f, INTERIOR.trussTop - INTERIOR.trussBottom, f));
-    }
-  }
-  for (const dz of [-10, 0, 10]) {
-    out.push(box('metal', INTERIOR_COLORS.purlin, ws.x, INTERIOR.trussTop + 0.06, ws.z + dz, ws.sizeX - 3, 0.14, 0.14));
-  }
-  return out;
-}
+/**
+ * 屋顶桁架：作者 2026-11-25 晚要求「黑色的杆子都去掉，影响观感」，整组删除。
+ * 原实现沿 x 每 6 m 一榀、每榀 2 根弦杆 + 21 根竖腹杆，另有 3 道纵向檩条，
+ * 两个车间合计约 280 根方管；从人眼机位看是一片密网，把设备压在下面。
+ * 灯带（emissive 组）保留，y 由 INTERIOR.lampY 单独定义，不再依赖桁架下弦标高。
+ * 反向守卫在 envInterior.test.ts：metal 组 y>7 的部件必须为 0，防止有人加回来。
+ */
 
 /**
  * 地面细节（R1.5 A 层，作者指定"人眼高度 3 m 内可见"）：全部并入 paint 组
@@ -308,9 +286,7 @@ export function buildInterior(): InteriorResult {
 
     // ---- 混凝土柱列（R1.5 A 层）----
     parts.push(...columns(ws));
-
-    // ---- 屋架 ----
-    parts.push(...trusses(ws));
+    // 屋架已按作者要求删除（2026-11-25 晚），顶部只留 5 道灯带
   }
 
   // ---- 地面细节（R1.5 A 层，paint 组）----
@@ -327,7 +303,7 @@ export function buildInterior(): InteriorResult {
 
   return {
     parts,
-    kinds: ['interior-walls', 'skirting', 'pilasters', 'columns', 'floor-detail', 'trusses', 'light-strips', 'window-bays', 'roller-door'],
+    kinds: ['interior-walls', 'skirting', 'pilasters', 'columns', 'floor-detail', 'light-strips', 'window-bays', 'roller-door'],
   };
 }
 

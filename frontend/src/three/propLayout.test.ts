@@ -11,7 +11,6 @@ import {
   FACTORY_BOUNDS,
   RAILING_OFFSET,
   buildHazardStrips,
-  buildPipes,
   buildPlinths,
   buildRacks,
   buildRailings,
@@ -87,32 +86,24 @@ describe('道具摆放不穿设备', () => {
     }
   });
 
-  it('管道的落地立管不插进设备', () => {
-    for (const p of buildPipes()) {
-      if (p.axis !== 'y') continue; // 只检查落地的立管，横管在高处 6.2 m，与设备不冲突
-      const rect = toRect(p.x, p.z, p.radius * 2, p.radius * 2);
-      for (const fp of footprints) {
-        expect(rectsOverlap(rect, fp), `立管(${p.x},${p.z}) 插进了 ${fp.deviceId}`).toBe(false);
-      }
-    }
-  });
+  // 管道已按作者要求整组删除（2026-11-25 晚），这里守住"不要悄悄加回来"：
+  // propBuilder 的类别清单由 acceptance-d2.mjs 断言，不再导出 buildPipes。
 });
 
 describe('道具摆放的合理性', () => {
-  it('七类道具都有内容（少于 7 类视为未完成）', () => {
+  it('六类道具都有内容（管道按作者要求删除后，下限由 7 降为 6）', () => {
     const counts = {
       plinth: buildPlinths().length,
       railing: buildRailings().length,
       hazard: buildHazardStrips().length,
       tray: buildTrays().length,
-      pipe: buildPipes().length,
       rack: buildRacks().length,
       sign: buildSigns().length,
     };
     for (const [kind, n] of Object.entries(counts)) {
       expect(n, `${kind} 数量为 0`).toBeGreaterThan(0);
     }
-    expect(Object.keys(counts)).toHaveLength(7);
+    expect(Object.keys(counts)).toHaveLength(6);
   });
 
   it('护栏覆盖四条产线的两侧', () => {
@@ -127,7 +118,7 @@ describe('道具摆放的合理性', () => {
     }
   });
 
-  it('线槽与管道都在车间范围内', () => {
+  it('线槽都在车间范围内（管道已删除）', () => {
     for (const ws of WORKSHOPS) {
       const trays = buildTrays().filter((t) => Math.abs(t.x - ws.x) < ws.sizeX / 2);
       expect(trays.length).toBeGreaterThanOrEqual(2);

@@ -59,11 +59,11 @@ export const ENV_COLORS = {
   purlin: 0x424b56,
   lamp: 0xaac7e4,
   // 通道漆：第一版 0x1b3a2c 在深色地面上一眼像草坪，压暗并去掉绿味
-  walkway: 0x18241c,
+  walkway: 0x5f6a73,
   yellowLine: 0xc9a227,
-  zebra: 0xb9c6d6,
+  zebra: 0xd8dee3,
   steel: 0x8b9299,
-  darkSteel: 0x39424f,
+  darkSteel: 0x59636d,
   glass: 0x9fc4e0,
   wood: 0x8a6a3f,
   crate: 0x7d8792,
@@ -148,32 +148,14 @@ export function buildFloorPaint(): EnvPart[] {
 
 // ---------------------------------------------------------------- 5. 桥架与线缆
 
-export const CABLE_TRAY_Y = 5.0;
-
 /**
- * 桥架：沿车间南北内墙各一道（4 段），每条产线再从墙边接一段短支线到线头上方。
+ * 天花桥架：作者 2026-11-25 晚要求「天花板的管道都去掉，影响观感」，整组删除。
  *
- * 第一版把桥架架在每条产线正上方（4 道长桥 + 12 处下引线 + 12 个接入臂），
- * 实拍后作者反馈"管道/线缆太密，影响看设备"——于是按作者要求改成**沿墙布置**：
- * 主桥架贴墙，只留 4 根支线进车间，设备上方的遮挡全部去掉。
+ * 历史：第一版是每条产线正上方 4 道长桥 + 12 处下引线；作者反馈"管道/线缆太密"
+ * 后改成沿墙布置（4 段主桥 + 4 根支线 + 竖杆）。这次进一步要求全部去掉，
+ * 所以数据、几何、验收类别一并删除，顶部只留 5 道白色灯带。
+ * 反向守卫在 envLayout.test.ts：metal 组不应再有 y ≥ 5 的长条/竖杆。
  */
-export function buildCableRuns(): EnvPart[] {
-  const parts: EnvPart[] = [];
-  for (const ws of WORKSHOPS) {
-    const wallZ = ws.sizeZ / 2 - 0.55;
-    for (const sz of [-1, 1]) {
-      parts.push(box('metal', ENV_COLORS.darkSteel, ws.x, CABLE_TRAY_Y, ws.z + sz * wallZ, ws.sizeX - 1.2, 0.1, 0.28));
-    }
-  }
-  // 每条线的短支线：从北墙桥架伸到色带起点上方（长 4.2 m，只到线头，不压设备）
-  for (const strip of LINE_STRIPS) {
-    const fromZ = strip.z - WORKSHOPS[0].sizeZ / 2 + 0.55;
-    const len = Math.abs(strip.z - fromZ);
-    parts.push(box('metal', ENV_COLORS.darkSteel, strip.x1 + 1.0, CABLE_TRAY_Y, (strip.z + fromZ) / 2, 0.26, 0.1, len));
-    parts.push(box('metal', ENV_COLORS.darkSteel, strip.x1 + 1.0, CABLE_TRAY_Y / 2 + 1.0, fromZ, 0.09, CABLE_TRAY_Y - 2.0, 0.09));
-  }
-  return parts;
-}
 
 // ---------------------------------------------------------------- 6. 玻璃隔断办公室
 
@@ -507,7 +489,6 @@ export function buildEnvironment(): EnvironmentResult {
   const parts: EnvPart[] = [
     ...interior.parts,
     ...buildFloorPaint(),
-    ...buildCableRuns(),
     ...buildOffice(),
     ...buildOuterProps(),
     ...buildSignPosts(),
@@ -519,7 +500,6 @@ export function buildEnvironment(): EnvironmentResult {
     kinds: [
       ...interior.kinds,
       'floor-paint',
-      'cable-tray',
       'office',
       'outer-racks',
       'sign-posts',

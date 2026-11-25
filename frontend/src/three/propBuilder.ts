@@ -3,7 +3,7 @@
  *
  * 每一类道具都必须是 **1~3 次 draw call**，做法只有两种：
  * - 重复件（基座、栏杆立柱、横杆）→ `InstancedMesh`；
- * - 形状各异但同材质的静态件（警示带、线槽、管道、货架）→ `mergeGeometries`。
+ * - 形状各异但同材质的静态件（警示带、线槽、货架）→ `mergeGeometries`。
  * 绝不允许"一根栏杆一个 mesh"，那是 120 次。
  *
  * 摆放坐标全部来自 propLayout.ts，这里只管几何与材质。
@@ -16,7 +16,6 @@ import {
   TRAY_HEIGHT,
   TRAY_WIDTH,
   buildHazardStrips,
-  buildPipes,
   buildPlinths,
   buildRacks,
   buildRailings,
@@ -26,7 +25,7 @@ import {
 
 export interface PropBuild {
   root: THREE.Group;
-  /** 实际建立的类别（验收断言"道具 ≥7 类"直接读它，不数 mesh） */
+  /** 实际建立的类别（验收断言"道具 ≥6 类"直接读它，不数 mesh） */
   kinds: string[];
   dispose: () => void;
 }
@@ -154,7 +153,6 @@ export function buildProps(): PropBuild {
   const steel = mat(new THREE.MeshStandardMaterial({ color: 0x8b9299, roughness: 0.55, metalness: 0.65 }));
   const safetyYellow = mat(new THREE.MeshStandardMaterial({ color: 0xd9a12a, roughness: 0.6, metalness: 0.3 }));
   const trayMat = mat(new THREE.MeshStandardMaterial({ color: 0x4d545c, roughness: 0.7, metalness: 0.4 }));
-  const pipeMat = mat(new THREE.MeshStandardMaterial({ color: 0x7e858d, roughness: 0.45, metalness: 0.75 }));
   const rackMat = mat(new THREE.MeshStandardMaterial({ color: 0xb26320, roughness: 0.7, metalness: 0.25 }));
 
   const dummy = new THREE.Object3D();
@@ -276,25 +274,10 @@ export function buildProps(): PropBuild {
     kinds.push('tray');
   }
 
-  // ---------- 6. 管道（主管 + 立管 → 1 次） ----------
-  {
-    const parts: THREE.BufferGeometry[] = [];
-    for (const p of buildPipes()) {
-      const geo = new THREE.CylinderGeometry(p.radius, p.radius, p.length, 12);
-      if (p.axis === 'x') geo.rotateZ(Math.PI / 2);
-      if (p.axis === 'z') geo.rotateX(Math.PI / 2);
-      geo.translate(p.x, p.y, p.z);
-      parts.push(geo);
-    }
-    const merged = mergeGeometries(parts, false);
-    for (const p of parts) p.dispose();
-    if (!merged) throw new Error('管道几何合并失败');
-    const mesh = new THREE.Mesh(track(merged), pipeMat);
-    mesh.name = 'prop:pipe';
-    mesh.castShadow = true;
-    root.add(mesh);
-    kinds.push('pipe');
-  }
+  // ---------- 6. 管道：作者 2026-11-25 晚要求「天花板的管道都去掉」，整组删除 ----------
+  // 原来是每车间一根贯穿东西的圆管 + 两端落地立管（D2 第 6 类道具）。
+  // 它横在相机与设备之间，人眼机位下比设备还显眼；连同材质与数据一起删，不留空 mesh。
+  // 删后 D2 的道具类别下限由 7 类调整为 6 类，见 docs/spec_phase4.md 偏差 D-72。
 
   // ---------- 7. 货架（4 个 × 7 件 → 1 次） ----------
   {

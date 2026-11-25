@@ -1,10 +1,10 @@
 /** 环境层与产线补齐件的几何约束：越界、扎设备、类别缺失，都在这里先暴露。 */
 import { describe, expect, it } from 'vitest';
 import { LINE_STRIPS } from './layout';
-import { INTERIOR_COLORS } from './envInterior';
 import {
   ATLAS_TEXT,
   ENV_BOUNDS,
+  ENV_COLORS,
   buildEnvironment,
   buildLineProps,
   buildStationLabels,
@@ -51,9 +51,10 @@ describe('环境层（本批）', () => {
     expect(env.kinds.length).toBeGreaterThanOrEqual(9);
   });
 
-  it('桁架杆件 > 100、灯带 = 5 道（四条线 + 通道）——柱子/桁架已由 envInterior 接管，见 envInterior.test.ts', () => {
-    expect(env.parts.filter((p) => p.color === INTERIOR_COLORS.truss).length).toBeGreaterThan(100);
-    expect(env.parts.filter((p) => p.group === 'emissive').length).toBe(LINE_STRIPS.length + 1);
+  it('灯带 = 5 道（四条线 + 通道）；屋架与天花桥架类别已按作者要求删除', () => {
+    expect(env.parts.filter((p) => p.group === 'emissive')).toHaveLength(LINE_STRIPS.length + 1);
+    expect(env.kinds, '顶部深色杆件不许加回来').not.toContain('trusses');
+    expect(env.kinds, '天花板管道/桥架不许加回来').not.toContain('cable-tray');
   });
 
   it('产线道具不与任何设备占地（含基座外扩）相交', () => {
@@ -81,7 +82,7 @@ describe('环境层（本批）', () => {
     expect(lineProps.kinds).toContain('short-conveyor');
     expect(lineProps.kinds).toContain('unload-slide');
     // 短传送带只有 B 线两条 → 机体 3.0 m 的深色钢件正好 2 件
-    const conveyors = lineProps.parts.filter((p) => p.color === 0x39424f && p.sx === 3.0 && p.sy === 0.16);
+    const conveyors = lineProps.parts.filter((p) => p.color === ENV_COLORS.darkSteel && p.sx === 3.0 && p.sy === 0.16);
     expect(conveyors.length).toBe(2);
   });
 
@@ -106,7 +107,7 @@ describe('环境层（本批）', () => {
   });
 
   it('标识立牌立柱：每块标识两根（围墙去掉后不悬空）', () => {
-    const posts = env.parts.filter((p) => p.color === 0x39424f && p.sx === 0.07 && p.sz === 0.07);
+    const posts = env.parts.filter((p) => p.color === ENV_COLORS.darkSteel && p.sx === 0.07 && p.sz === 0.07);
     expect(posts.length).toBe(10); // 5 块标识 × 2 根
   });
 });
