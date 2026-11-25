@@ -2,647 +2,1028 @@
 
 ```yaml
 阶段: 第 4 阶段
-版本: v1.1（v1.0 冻结版基础上，补 §6 的施工细节与偏差 D-18 ~ D-25；需求本身未变）
-日期: 2026-11-24
+版本: v2.0（按作者 2026-11-25 的六项决策重规划；v1.0 与 v1.1 原文已归档）
+日期: 2026-11-25
+上一版: v1.1（2026-11-25，4.2 批完成后升版，含偏差 D-18 ~ D-25）
+归档: docs/archive/spec_phase4_v1.0.md（636 行）、docs/archive/spec_phase4_v1.1.md（648 行）
 上游依据: docs/方案.md 第 170 行、docs/spec_phase2.md（L-01 / L-02 / L-12）、docs/spec_phase3.md（D-03 预留）
-前置阶段: 第 3 阶段 v1.1 已交付并验收
+已完成: 4.1 批（异常检测训练）、4.2 批（后端接入 + AI 页）
+剩余: 4.3 ~ 4.7
 ```
+
+---
 
 ## 0. 本文件怎么用
 
-1. 本文件是第 4 阶段的**唯一施工依据**。规格未定之处不许自行发挥，回来问。
-2. 第 3 节 G 组九项已于 2026-11-24 由作者确认「按建议执行」，本文件同日由 v0.1 升 **v1.0 冻结**。
-   冻结后如需变更，必须走「改规格 → 作者确认 → 升版本号」同一流程，不得直接改代码。
-3. 第 2.1 节定了**交付顺序**（先模型后管道），第 12 节按这个顺序分批，每批单独验收。
-4. 第 1 节是实测基线，规格里的所有数字都必须能从这一节或它的重跑命令复现。
-5. 施工中与规格不符的地方，记到第 15 节「偏差表」，不静默改规格。
-6. **v1.1 说明（2026-11-25，4.2 批完成后升版）**：G 组九项与交付顺序均未变，
-   变的是实现细节——两张新表的用途、两张图的渲染方式、扫描游标的回退窗（D-18 ~ D-25）。
-   其中 **D-23 修的是第 2 阶段的遗留缺陷**，不属于第 4 阶段新功能，但会直接影响告警判定的正确性，
-   所以一并修掉并补了回归测试。
+### 0.1 三条阅读路径
 
-## 1. 现状基线（2026-11-24 实测，作为本阶段全部决策的依据）
+不要从第 1 页读到最后一页。按你的目的选一条：
 
-### 1.1 数据规模
-
-| 项 | 实测值 | 取数命令 |
+| 你的目的 | 读哪几节 | 大约多久 |
 |---|---|---|
-| 遥测行数 | **814,813** | `SELECT count(*) FROM device_telemetry;` |
-| 表占用 | **180 MB**（含索引） | `SELECT pg_size_pretty(pg_total_relation_size('device_telemetry'));` |
-| 时间跨度 | **32 小时**（11-23 04:54 ~ 11-24 13:20 UTC） | `SELECT min(ts), max(ts) FROM device_telemetry;` |
-| 设备数 | 14 | `SELECT count(DISTINCT device_id) FROM device_telemetry;` |
-| 注入真值 | 219 条区间 | `SELECT count(*) FROM anomaly_injection;` |
-| 告警 | 53 条（TEMP 27 / VIB 15 / CURRENT 11） | `SELECT alarm_type, count(*) FROM alarms GROUP BY 1;` |
-| 订单 | 52 条 | `SELECT count(*) FROM production_orders;` |
+| **想知道这一版为什么改了** | §0.2 差异导读 → §1 决策变更表 | 10 分钟 |
+| **要开始施工某一批** | §3 基线 → §4 那一批 → §5 那一批的验收命令 | 20 分钟 |
+| **只想核对某个数字** | 附录 A 复核命令清单（每个数字都标明取数 SQL） | 按需 |
 
-### 1.2 标签分布（决定建模方案的硬约束）
+三条铁律，对全文有效：
 
-```sql
-SELECT a.anomaly_type, count(DISTINCT a.id) AS 区间数, count(t.ts) AS 落入行数,
-       round(avg(EXTRACT(EPOCH FROM (COALESCE(a.ended_at, now()) - a.started_at)))) AS 平均时长秒
-FROM anomaly_injection a
-LEFT JOIN device_telemetry t
-  ON t.device_id = a.device_id AND t.ts >= a.started_at AND t.ts < COALESCE(a.ended_at, now())
-GROUP BY a.anomaly_type ORDER BY 3 DESC;
-```
+1. **本文件是第 4 阶段的唯一施工依据。** 规格未定之处不许自行发挥，回来问。
+2. **数字必须可复核。** 本文出现的每个数字，要么在 §3 有实测记录，要么在附录 A 有取数命令。写「性能显著提升」而无数值的句子一律不允许。
+3. **施工与规格不一致时记偏差，不静默改规格。** 记到附录 B，并从 D-26 起编号（D-11 ~ D-25 已占用，不重排）。
 
-| 类型 | 区间数 | 覆盖遥测行 | 平均时长 | 行占比 |
-|---|---|---|---|---|
-| TEMP_DRIFT | 81 | 16,744 | 419 s | 2.06 % |
-| CURRENT_ABNORMAL | 58 | 2,509 | 89 s | 0.31 % |
-| VIB_SPIKE | 80 | 1,600 | 40 s | 0.20 % |
-| **合计（含重叠）** | **219** | **20,853** | — | **2.56 %** |
+### 0.2 v1.0 → v2.0 差异导读
 
-由此得出三条不可回避的结论，规格必须围绕它们设计：
+v1.0 是"六块全做"的完整计划。v2.0 不是把 v1.0 修修补补，而是按 2026-11-25 的六项决策**重划了范围**。变化分四类，逐类说清"变了什么、为什么变"：
 
-- **结论 1：极端不均衡。** 正例 2.56%，最多类与最少类差 **10.5 倍**。用 accuracy 或 ROC-AUC 评价都会给出漂亮的假象，主指标必须是 **PR-AUC** 与**宏平均 F1**。
-- **结论 2：样本必须按注入区间分组切分。** 同一段注入的相邻行高度相关，随机切分会把同一段波动同时放进训练与测试，模型只要"记住这段形状"就能刷到 95%+ 准确率。**本规格强制时间切分，并把随机切分作为反面对照实验记录差值。**
-- **结论 3：注入密度是演示设定，不是真实先验。** 32 小时 219 个区间 ≈ **每 8.8 分钟一次异常**，真实机加工产线远低于此。这一点必须写进前端文案（第 6.3 节），否则模型指标会被误读为"工厂真实异常率"。
-
-### 1.3 数据量不足的前置条件
-
-32 小时做时间切分后，测试段只剩 4～5 小时（约 1.1 万行 / 每设备 80 行），单设备指标抖动会很大。**本阶段动工前必须先回填到 7 天**：
-
-```powershell
-python -m data_pipeline.simulator --backfill-days 7 --duration 0
-```
-
-预期约 **4.23M 行**（7 × 43,200 时刻 × 14 台），约 **0.9 GB**（按当前 180 MB / 81.5 万行折合 221 字节每行推算）。
-现有 81.5 万行（32 小时）会被这 7 天覆盖并去重，所以总量是 423 万而不是 505 万——`ON CONFLICT DO NOTHING` 的 `duplicated` 计数会非零，这是正常的，不是重复写入。
-这个量级也正好让第 7 节的 TimescaleDB 压缩比实测有意义。回填耗时按第 2 阶段实测（604,590 行 22~28 秒）线性外推约 **2.5~3 分钟**。
-
-> 回填必须**连注入记录一起回填**（第 2 阶段 `--backfill-days` 已实现），否则训练集里没有标签。
-
-### 1.4 推理侧现状
-
-第 3 阶段 `/ai` 页只展示真值（D-03），灰色虚线框写着「异常检测模型输出 —— 预留，本阶段不实现」。这是本阶段 F 块的落点，**不需要新建页面，只替换该区域**。
-
-## 2. 目标与范围
-
-### 2.1 六块与交付顺序
-
-方案原文（`docs/方案.md` 第 170 行）：「建立数据处理流水线、引入 Kafka、异常检测、训练故障风险模型、训练生产预测模型」，交付物「具备数据分析与预测能力的系统」。
-
-作者 2026-11-24 已确认顺序为**先模型后管道**：
-
-| 序 | 块 | 内容 | 为什么在这个位置 |
-|---|---|---|---|
-| 1 | **C** | 异常检测模型（三类注入，替代阈值规则） | 最能体现"分析能力"，且标签已就绪 |
-| 2 | **F** | 前端 `/ai` 页落地模型输出 | 模型必须有可视落点，否则等于没做 |
-| 3 | **B** | TimescaleDB hypertable + 压缩比实测 | 数据量被回填推到 500 万行，此时迁移才有实测意义 |
-| 4 | **A** | Kafka 替换 HTTP 直写接入 | 工程叙事，不影响功能；放在数据量上来之后 |
-| 5 | **D** | 故障风险 | 标签（53 条告警）严重不足，先做规则聚合版 |
-| 6 | **E** | 产量预测 | 数据量最小（52 单），最后做，允许降级为基线对比 |
-
-**为什么不是按方案原顺序**：按方案先做 Kafka，前 3 周看不到任何 AI 效果，且 7 条/秒的数据量下 Kafka 纯属负担（`spec_phase2.md` L-02 原文）。先做模型能把"AI 分析"这个毕设核心卖点尽早变成可截图的东西，工程管道后补不影响最终形态。
-
-### 2.2 阶段完成判据
-
-六块全做完才算阶段完成，且每块必须满足：
-
-1. 有一条可复制执行的命令能产出该块的核心数字；
-2. 数字写进 `docs/acceptance_phase4.md`（三列：结论 / 命令 / 实际输出）；
-3. 前端或接口能消费该块的产物（B 块除外，它是存储层）。
-
-## 3. 缺口清单
-
-### 3.1 G 组：必须现在定（**九项已全部确认，按建议值执行**）
-
-| 编号 | 缺口 | 定稿值 | 状态 |
-|---|---|---|---|
-| **G-01** | 模型推理放在哪 | **后端进程内 lazy load**（`app/services/ml_anomaly.py`），启动时校验特征 schema 哈希，不匹配或加载失败则**自动降级回阈值规则**并打警告日志 | 已定 |
-| **G-02** | 异常检测的任务形式 | **两个任务**：① 主任务二分类（正常 / 异常）；② 辅任务三分类（在判为异常的样本上归因到 TEMP_DRIFT / VIB_SPIKE / CURRENT_ABNORMAL） | 已定 |
-| **G-03** | 训练/测试切分方式 | **按时间切分**（前 70% 训练 / 中 15% 验证 / 后 15% 测试），并额外跑一次随机切分作为**反面对照**，把两者差值写进报告 | 已定 |
-| **G-04** | 是否改 WebSocket 契约 | **不改**。模型分数只走新增 REST 接口，WS snapshot 保持 14 字段不变 | 已定 |
-| **G-05** | TimescaleDB 镜像 | **换 `timescale/timescaledb:2.17.2-pg16`**（锁版本）。`postgres:16` 官方镜像**不含**该扩展 | 已定 |
-| **G-06** | 新增 Python 依赖 | `scikit-learn==1.5.2`、`xgboost==2.1.3`、`joblib==1.4.2`、`pyarrow==18.1.0`、`kafka-python==2.0.2`，放 `requirements-ml.txt`，**不进 `requirements.txt`** | 已定 |
-| **G-07** | 是否新增数据表 | **加两张**：`model_versions`、`anomaly_scores` | 已定 |
-| **G-08** | 特征是否做设备归一化 | **做**。幅值类特征转成「相对该设备正常区间的偏离度」，基线统计量**只从训练期计算并存进 artifact** | 已定 |
-| **G-09** | 类别不均衡的处理 | **只用 `scale_pos_weight` / class_weight**，**不做 SMOTE 等过采样** | 已定 |
-
-> 每项被否掉会造成的后果（为什么必须现在定）保留在 v0.1 评审记录里，见第 14 节。
-
-### 3.2 L 组：可以以后再定
-
-| 编号 | 缺口 | 本阶段默认 | 触发条件 |
-|---|---|---|---|
-| L-01 | 模型定时重训 | 不做，训练由人手工 `python -m ml.anomaly_detection.train` 触发 | 数据每周增长超过训练集一半时 |
-| L-02 | Feature store | 不做，特征在训练脚本里现算，推理时同一函数复用 | 出现第二类模型需要复用同一批特征时 |
-| L-03 | 模型漂移监控 | 不做，只在 `model_versions` 里存训练期指标 | 上线运行超过 1 个月 |
-| L-04 | A/B 实验框架 | 不做 | 无 |
-| L-05 | 在线学习 / 增量训练 | 不做 | 无 |
-| L-06 | MLflow 实验跟踪 | 不做，用 JSON 报告 + git commit 代替 | 超参数搜索轮次超过 50 次时 |
-| L-07 | 深度学习（LSTM / Transformer） | 不做，技术栈锁定 scikit-learn + XGBoost（AGENTS.md 第 2 节） | 无 |
-| L-08 | GPU 训练 | 不做 | 无 |
-| L-09 | 真实数据集对照（NASA C-MAPSS） | 可选加分项，不进验收 | 论文需要"公开数据集验证"时 |
-| L-10 | SHAP 逐样本解释 | **建议做简化版**（TreeExplainer，只输出 top-5 特征贡献），作为 P1 | 答辩被问"模型可解释性"时 |
-
-## 4. 工程与目录
-
-### 4.1 新增依赖（`requirements-ml.txt`，版本写死）
-
-```
-scikit-learn==1.5.2
-xgboost==2.1.3
-joblib==1.4.2
-pyarrow==18.1.0
-kafka-python==2.0.2
-```
-
-已装：`pandas==2.2.3`、`numpy==2.5.5`（在 `requirements.txt` 里）。
-
-> **兼容性注意**：本机 numpy 是 2.5.5，scikit-learn 1.5.2 依赖的 C 扩展需支持 numpy 2.x。若安装后 `import sklearn` 报 `_ARRAY_API not found`，改为 `scikit-learn==1.6.1`（首个完整支持 numpy 2 的版本）。这一条在 4.2 节「依赖自检」里固化成一条命令。
-
-### 4.2 目录结构
-
-```
-ml/
-  common/
-    db.py                只读数据库连接（复用 .env，不做 ORM）
-    features.py          特征工程（训练与推理共用，唯一实现）
-    split.py             时间切分 / 分组切分 / 随机切分（对照组）
-    metrics.py           PR-AUC、宏 F1、区间级检出率、每小时误报次数
-  anomaly_detection/
-    build_dataset.py     从库导出特征矩阵 + 标签，落 parquet（可重复执行）
-    train.py             训练三个基线 + 主模型，写 artifacts/ 与报告
-    evaluate.py          在测试段出报告与图（混淆矩阵、PR 曲线）
-    score.py             批量打分写入 anomaly_scores（供前端）
-  fault_risk/
-    build_labels.py      从 alarms 造"未来 N 分钟是否告警"标签
-    train.py             规则聚合版（见第 9 节）
-  production_forecast/
-    build_dataset.py     按小时聚合产量
-    train.py             XGBoost 回归 + 三个基线
-  evaluation/
-    reports/             每次训练的 JSON + PNG 报告（进 git）
-artifacts/               模型文件（.joblib），不进 git
-app/services/
-  ml_anomaly.py          进程内加载 + 降级（G-01）
-app/routers/
-  ml.py                  新增 /ml/* 接口
-database/
-  migrate_timescale.sql  第 7 节迁移脚本
-  phase4_tables.sql      新增两张表（G-07），只建不删
-```
-
-### 4.3 依赖自检（每次动工前先跑）
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-ml.txt
-python -c "import sklearn, xgboost, joblib, pyarrow; print('sklearn', sklearn.__version__); print('xgboost', xgboost.__version__)"
-```
-
-预期打印两个版本号且无 warning。**报错就停下**，按 4.1 的兼容性注意调整版本，不要绕过。
-
-## 5. C 块：异常检测
-
-### 5.1 任务定义
-
-- **主任务**：给定设备 `d` 在时刻 `t` 的特征向量，判定 `t` 是否落在该设备的任一注入区间内（二分类）。
-- **辅任务**：在真实异常样本上，判定属于哪一类（三分类）。
-- **明确不是提前预警**：本任务是"当前状态判定"。提前 N 分钟预警是 D 块的事，两者不可混谈。
-
-### 5.2 标签构造
-
-标签来源**只能是** `anomaly_injection`（第 2 阶段写入的 ground truth），不得用 `alarms` 表——那只是阈值规则的输出，用它当标签等于让模型学阈值规则，无法证明优于基线。
-
-```sql
--- 行级标签：ts 落在该设备任一注入区间内即为正例
-SELECT t.device_id, t.ts,
-       COALESCE(a.anomaly_type, 'NORMAL') AS label
-FROM device_telemetry t
-LEFT JOIN anomaly_injection a
-       ON a.device_id = t.device_id
-      AND t.ts >= a.started_at
-      AND t.ts <  COALESCE(a.ended_at, t.ts + INTERVAL '1 second')
-```
-
-**边界约定**：`started_at` 闭区间、`ended_at` 开区间；`ended_at IS NULL` 表示"仍在进行"，按查询时刻封口。三条规则必须与第 2 阶段 `spec_phase2.md` 的注入语义完全一致，否则标签会多算/少算。
-
-### 5.3 特征工程（`ml/common/features.py`，训练与推理共用同一函数）
-
-采样间隔 2 秒，按设备分组。三档滑窗：
-
-| 窗口 | 点数 | 用途 |
+| 类别 | 变了什么 | 为什么 |
 |---|---|---|
-| 15 s | 8 | 抓突变（VIB_SPIKE 平均只持续 40 s，长窗会把它抹平） |
-| 60 s | 30 | 抓趋势（TEMP_DRIFT 是缓慢漂移） |
-| 300 s | 150 | 抓基线偏移 |
+| **① 决策反转** | A 块 Kafka **整块废止**（原 §8 的拓扑、生产者、消费者、四条验收判据全部作废），改为只产出一份 `docs/decision_kafka.md`；依赖清单删掉 `kafka-python` | 全厂吞吐实测 7 行/秒，而当前 HTTP 直写的实测上限是 26,186 行/秒（§3.4）。在这个规模下接 Kafka，端到端只多一跳、多一个容器、多一类故障，功能零增加。**这不是"以后再做"，是判定为该做之前先证明值得做** |
+| **② 范围收窄** | D 块从「规则聚合风险打分」收窄为「数据可行性评估 + 演示级指示」；E 块从「小时 × 产线预测」收窄为「两个粒度 + 与最笨基线对比」 | D 块的监督标签实测只有 **3 条维护记录**，既训不出模型也验证不了任何分数；E 块实测小时 × 产线网格 **66.7% 是空格**，天级只有 **7 个完整日**。原来的写法默认"有可预测信号"，这个前提从未被验证 |
+| **③ 实现回填** | 4.1 / 4.2 两批已交付的内容，从「待施工」改为「以实现为准」：产物清单、脚本名（`score_window.py` 而非 `score`）、两张表的用途（存档而非推理源）、验收数字（pytest 24 而非 8） | 规格与实现各留一套说法，两周后必然对不上。**已实现的以实现为准，不以旧草案为准** |
+| **④ 数字刷新** | §3 基线从回填前的「81.5 万行 / 32 小时 / 219 区间 / 53 告警」改为回填后的「456 万行 / 7.5 天 / 1,029 区间 / 722 告警」 | 旧基线写于回填之前。沿用会让后续每个判断都错位一个数量级 |
 
-每档窗口对 4 个指标（temperature / vibration / current / speed）算 5 个统计量：`mean`、`std`、`min`、`max`、`slope`（最小二乘斜率）。共 `3 × 4 × 5 = 60` 维。
+**一句话概括这次重规划**：v1.0 假设"数据够、管道值得建"，v2.0 先把这两个假设各自拿去实测，实测不成立的分别降级为"决策记录"和"可行性评估 + 基线对比"。
 
-再加：
+### 0.3 版本与归档
 
-| 特征组 | 维度 | 说明 |
-|---|---|---|
-| 一阶差分 | 4 | `x(t) - x(t-1)`，抓瞬时跳变 |
-| 归一化偏离度（G-08） | 4 | `(x - lo) / (hi - lo)`，`lo/hi` 取自 `config/devices.json` 的 `normal_range` |
-| 稳健 z-score | 4 | `(x - median_train) / (1.4826 × MAD_train)`，比标准差抗异常点 |
-| 超阈值指示 | 3 | 是否越过 warning / critical（连续量，不是布尔的硬开关） |
-| running_status 独热 | 3 | RUNNING / IDLE / STOPPED |
-
-合计约 **78 维**。
-
-**两条防泄漏硬约束**：
-
-1. `median_train` / `MAD_train` **只能用训练段的数据计算**，算完存进 artifact，推理时读 artifact。用全量数据算会让测试段信息渗进特征。
-2. 滑窗 `rolling(window, min_periods=1)` **不 shift**：时刻 `t` 的窗口包含 `t` 本身。这是允许的——推理时 `t` 的读数已经拿到。但**绝不能出现 `shift(-k)`**，那才是用未来数据。
-
-### 5.4 数据切分（G-03，本节是硬约束不是建议）
-
-```
-全量时间轴:  |———— 训练 70% ————|—— 验证 15% ——|—— 测试 15% ——|
-```
-
-- 切分点按**时间**取，不按行数取，确保三段的物理时间不重叠。
-- 任何跨越切分点的注入区间：**把它在验证/测试段的行剔除**（保留训练段部分）。
-  这样既保证同一段注入不横跨两段，又保证三段严格互斥。
-  代价是损失极少量正例（实测 3 个区间 / 47 行），剔除数写进 `anomaly_meta.json`。
-
-  > **v1.0 施工修正（偏差 D-17）**：本节初版写的是"整段归入训练段"，实测发现并入后
-  > 训练段里会出现**晚于验证段起点**的行，训练段与验证段在时间上重叠，既违反"物理时间
-  > 不重叠"，又让验证集指标偏乐观。改为剔除。任何处理都会损失一点东西，关键是损失要
-  > 说清楚、且不能自相矛盾。
-
-- 三段的正例率必须分别打印并检查，若测试段正例率偏离训练段超过 2 倍，说明切分点选得不好，需重选。
-
-**反面对照（必须做）**：同样数据用 `train_test_split(random_state=42)` 随机切分跑一遍，把两组指标并排写进报告。预期随机切分 PR-AUC 会明显高于时间切分，差值就是泄漏的量化幅度。这个对照是答辩时"你怎么证明指标不是刷出来的"的直接答案。
-
-### 5.5 类别不均衡（G-09）
-
-- XGBoost：`scale_pos_weight = 负例数 / 正例数`（当前约 38:1，回填 7 天后重新计算）。
-- 逻辑回归 / 树基线：`class_weight='balanced'`。
-- **不做** SMOTE / 随机过采样 / 随机欠采样。理由见 G-09。
-- 阈值不取 0.5：在验证段扫描阈值，选一个满足「每设备每小时误报 ≤ 1 次」的最大召回点，把该阈值存进 artifact。业务上"每小时误报 1 次"是运维能接受的量级，这个约束要写进文档。
-
-### 5.6 模型与基线
-
-必须训练并对比四个，缺一不可：
-
-| # | 模型 | 角色 | 说明 |
+| 版本 | 日期 | 状态 | 原文位置 |
 |---|---|---|---|
-| 0 | **现有阈值规则** | 业务基线 | 直接用后端 `alarms` 表的判定结果，不需训练。若模型打不过它，本块无意义 |
-| 1 | 逻辑回归 | 可解释基线 | 系数正负能讲清"哪个指标在推动判定" |
-| 2 | IsolationForest | 无监督基线 | `contamination=0.0256`（按实际正例率），只用训练段**正常样本**训练，不碰标签 |
-| 3 | **XGBoost** | 主模型 | 二分类 `binary:logistic`，早停用验证段 PR-AUC |
+| v0.1 | 2026-11-24 | 草案，G 组九项待确认 | git 历史 `9ab70b7` |
+| v1.0 | 2026-11-24 | 冻结，G 组按建议执行 | `docs/archive/spec_phase4_v1.0.md` |
+| v1.1 | 2026-11-25 | 4.2 批后升版，补实现细节与 D-18 ~ D-25 | `docs/archive/spec_phase4_v1.1.md` |
+| **v2.0** | **2026-11-25** | **本文件，按六项决策重规划** | `docs/spec_phase4.md` |
 
-辅任务（类型归因）：XGBoost `multi:softprob`，只在正例上训练，3 类。
+> 归档文件**只读**。以后要查"这条当初是怎么写的"，去归档里看，不要改归档。
 
-超参不做大规模搜索（L-06）：固定一组合理值（`max_depth=6`、`learning_rate=0.1`、`n_estimators=400`、`subsample=0.8`、`colsample_bytree=0.8`），`early_stopping_rounds=30`。这样可复现，也够用。
+---
 
-### 5.7 评估指标（`ml/common/metrics.py`）
+## 1. 决策变更表
 
-| 指标 | 为什么用它 |
+本章是 v1.0 → v2.0 的完整账本。**每一条都能追到"旧条款在哪、新条款是什么、为什么改"**。施工时如果发现某条旧条款没在这里出现，说明它被原样沿用，不是被漏掉。
+
+### 1.1 块级变更
+
+| 旧条款（**v1.0 编号，与本文同名章节不是一回事**） | 新条款（v2.0） | 变更理由 |
+|---|---|---|
+| 旧 §2.1 六块：C → F → B → **A** → D → E | 五块：C → F → B → D → E，外加一份 **A′ 决策记录**（不改代码、不改 compose） | A 块不是"晚点做"，是**判定为当前规模下不该做**。负载 7 行/秒，实测写入上限 26,186 行/秒，余量 3,700 倍 |
+| 旧 §2.2「六块全做完才算阶段完成」 | 五块交付完成 + A′ 文档评审通过 | A′ 的产物是判断而非功能，用文档评审验收，不用脚本验收 |
+| 旧 §8 A 块整节：KRaft 拓扑 / 分区方案 / `--sink` 生产者 / 消费者 / 四条判据 | **整节废止**，置换为本文 §7「Kafka 决策记录的写作提纲」；交付 `docs/decision_kafka.md` | 接上 Kafka 的净效果是「模拟器 → HTTP → Kafka → 消费者 → 同一个 `save_telemetry()`」：多一跳、多一个容器、多一类（积压/重复消费/分区不均）故障，功能零增加。而现有 HTTP 路径已经具备批量、幂等（`ON CONFLICT DO NOTHING`）、重试 |
+| 旧 §9 D 块：规则聚合风险打分（0.5 / 0.3 / 0.2 加权） | 先做**数据可行性评估**，再给一个**明确标注"演示级、不具备预测能力"**的剩余寿命指示（振动趋势外推） | 维护记录实测 **3 条**（2 完成 / 1 进行中，全部集中在 11-24 同一天）。3 行数据训不出分类器；规则聚合版同样无法验证——没有任何一列可以当作"风险分数是否正确"的答案 |
+| 旧 §10 E 块：小时 × 产线 + MAPE + 三个基线 | 固定 **4 小时槽位（48 格 / 42 格有单）**与**天级（8 桶 / 7 个完整日）** 两个粒度；验收标准 = **与最笨基线相比是否显著改善，不显著就如实写不显著** | 实测小时 × 产线网格 660 格中 440 格为空（**66.7%**），天级只有 7 个完整样本。原写法把"能预测"当成了已知前提 |
+| 旧 §11 验收清单（含 `docker compose up -d kafka`、`--sink kafka`、两张 PNG、`ml.anomaly_detection.score`、`ml.fault_risk.train`、`ml.production_forecast.train`、`pytest 8 passed`） | 按批次重写（本文 §5）；脚本名以实际文件为准；PNG 已废止；pytest 基线 24 | 旧清单里 **3 个模块名从未存在**（`score.py` / `fault_risk/train.py` / `production_forecast/train.py`），照抄会直接 `ModuleNotFoundError`；PNG 已被偏差 D-12 废止 |
+| 旧 §12 五批（4.1 ~ 4.5） | 七批（4.1 ~ 4.7），见本文 §4 | B 块拆成「迁移」与「压缩 + 查询对比」两批：换镜像要重建库，而"迁移前"的体积口径必须在换镜像之前采，混做会永久丢掉这组数字；A′ 独立成批，避免"顺手也把 Kafka 装上" |
+
+### 1.2 G 组九项去向
+
+作者 2026-11-24 确认的 G-01 ~ G-09 逐条处理如下。**没有一项因本次决策而彻底失效**；唯一被否掉的是 G-06 里的 Kafka 依赖。
+
+| 编号 | 内容（v1.0） | 去向 | 理由 |
+|---|---|---|---|
+| **G-01** | 推理放后端进程内，lazy load + schema 校验 + 失败降级 | **保留，注明已实现** | 4.2 批已落地：artifact 缺失 / 指纹不符 / 依赖未装一律 `loaded=false` + 人话原因，接口仍返回 200；降级时告警照旧由阈值规则产生，与原意一致 |
+| **G-02** | 二分类主任务 + 三分类归因辅任务 | **保留，注明已实现** | 三分类宏 F1 1.0 属"每设备只配一种异常类型"的数据集事实，不能当泛化能力，已写入验收文档 |
+| **G-03** | 按时间切分 + 随机切分作反面对照 | **保留，注明已实现** | 随机切分虚高 +0.0123 已量化；偏差 D-17 修掉了跨切分区间造成的时间重叠 |
+| **G-04** | 不改 WebSocket 契约 | **保留（沿用）** | 模型分数只走新增 REST 接口，WS snapshot 仍是 14 字段，前端零改动 |
+| **G-05** | TimescaleDB 镜像锁 `2.17.2-pg16` | **保留，并细化** | `postgres:16` 官方镜像不含扩展这条硬约束不变；迁移参数与测量口径补在 §6 |
+| **G-06** | 五个新依赖：sklearn / xgboost / joblib / pyarrow / **kafka-python** | **修订：删掉 `kafka-python==2.0.2`，其余四个保留** | Kafka 不接，依赖也不该留。留一个用不上的库，等于给"以后顺手接一下"留口子，也会让人误以为本项目具备 Kafka 能力 |
+| **G-07** | 新增 `model_versions`、`anomaly_scores` 两张表 | **保留，注明已实现** | 表结构不变；用途按偏差 D-18 / D-19 修正为"历史存档"，推理真相源是 artifact |
+| **G-08** | 特征按设备正常区间归一化，基线只从训练期计算 | **保留，注明已实现** | 基线存进 `anomaly_meta.json`，推理侧复用同一份，避免训练与推理各算一次 |
+| **G-09** | 只用 `class_weight` / `scale_pos_weight`，不做 SMOTE | **保留，注明已实现** | 84.8 万行 × 1.68% 正例，过采样会把内存打爆（实测峰值已顶到可用内存上限） |
+
+### 1.3 逐节条款变更
+
+| 旧条款（v1.0 编号） | 新条款 | 理由 |
+|---|---|---|
+| 旧 §1 基线：81.5 万行 / 32 小时 / 219 区间 / 53 告警 / 52 订单 | 本文 §3 按当前实测全量重填 | 旧基线写于回填**之前**（见 0.2 第 ④ 类） |
+| 旧 §1.3「动工前必须先回填到 7 天」 | 改为「回填已完成」+ 记录实测行数与耗时 | 前置条件已满足，不再是一条待办 |
+| 旧 §4.1 依赖清单（5 行） | 4 行，删 `kafka-python` | 同 G-06 |
+| 旧 §5.8 训练产物（joblib + 报告 + 两张 PNG） | 以实际产物为准：`artifacts/anomaly_xgb_<commit>.joblib`、`anomaly_meta.json`、`ml/evaluation/reports/*.json` 与 `*.md` | 偏差 D-12 已废止 PNG；实现已定型，规格不该留第二套说法 |
+| 旧 §5.10 `python -m ml.anomaly_detection.score` | `python -m ml.anomaly_detection.score_window`，参数 `--hours` / `--device` / `--end` | 旧模块名从未存在；参数写错（例如误写成 `--days`）会白跑一次批量打分 |
+| 旧 §6 F 块（待施工，含伪代码与改造步骤） | 标记**已交付**；正文只留三条红线与验收锚点，细节指向 `docs/acceptance_phase4.md` 第 8 节 | 规格与实现两套说法，以后必然对不上 |
+| 旧 §7 B 块（迁移 + 压缩比） | 扩写为本文 §6「TimescaleDB 迁移细则」，新增**三口径体积**（表 / 索引 / 总量） | 实测索引 554 MB **大于**表 445 MB。压缩只压 heap、不压索引，只报"总量压缩比"会得出虚高数字 |
+| 旧 §13 明确不做（12 条） | 本文 §8，增补 4 条（含 3 条新禁令） | 把本次决策反转固化成禁令，防止几周后被当成"顺手补一下"重新提上来 |
+| 旧 §14 冻结记录（4 条，2026-11-24） | 本文附录 C，追加 2026-11-25 四条 | 决策要能追溯"谁、哪天、为什么" |
+| 旧 §15 偏差表（D-11 ~ D-25） | 移入附录 B，**保留原编号不动**；新偏差从 D-26 起 | 重新编号会打断 `docs/acceptance_phase4.md` 里已有的 D-xx 引用 |
+
+### 1.4 新增条款（旧文完全没有）
+
+| 新增 | 内容 | 为什么必须加 |
+|---|---|---|
+| §5.8 人工检查单列 | 明确哪几件事脚本测不了、看什么、判定标准是什么 | 旧文把"人工确认"混在验收命令里，等于没有验收 |
+| §6.5 三口径体积 | 表 / 索引 / 总量分别记；压缩比按表口径报，同时给总量 | 索引占本次数据体积的 55%，只报总量会误导 |
+| §7 决策记录提纲 | 8 个章节，每章标明要回答的问题与必须带上的数字 | 决策记录最容易写成感想，用提纲把它约束成证据链 |
+| §4.5 重评触发条件 | 写入规模达到 **N 倍**时重新评估，N 由实测吞吐与安全余量算出，不是拍脑袋 | "以后再说"不是决策。N 必须有可复算的来源 |
+
+---
+
+## 2. 阶段目标重述
+
+**一句话**：把「按阈值报警」升级为「有离线评估、每个数字可追溯、模型挂了能降级」的异常检测，并对剩下四个工程决策（时序存储、消息队列、故障风险、产量预测）各给出一个**有实测数字支撑的判断**——做或不做都可以，但必须有理由。
+
+本阶段**不**旨在证明以下三件事，写论文与答辩时不要越界：
+
+| 不证明 | 原因 |
 |---|---|
-| **PR-AUC** | 主指标。正例 2.56% 时 ROC-AUC 会给出 0.98 的假象 |
-| 宏平均 F1 | 三分类归因任务用，防止大类吃掉小类 |
-| 每类 precision / recall / F1 | 报告要按类列，VIB_SPIKE 只有 1,600 行，单看总体会掩盖它很差 |
-| **区间级检出率** | 业务真正关心的：219 个注入区间里，有多少个至少被检出 1 行。分子分母都写进报告 |
-| **每设备每小时误报次数** | 运维可感知的量。模型分数曲线上"看起来还行"和"每小时弹 30 次"是两回事 |
-| 混淆矩阵 | 前端 F 块要画，直接复用 |
-| 检测延迟 | 从区间 `started_at` 到首次判为异常的时间差，中位数 |
+| 模型在真实工厂上有效 | 全部数据由模拟器生成，标签是注入真值，不是现场故障 |
+| 系统能支撑真实产线规模 | 14 台设备 / 7 行每秒是演示规模，所有容量数字都只对这个规模成立 |
+| 故障风险与产量能被准确预测 | D 块只有 3 条维护记录，E 块天级只有 7 个完整样本（§3.3） |
 
-### 5.8 训练产物（**v1.0 施工后按 D-12 调整**）
+---
 
-```
-artifacts/                                  （进 .gitignore，可由脚本重建）
-  anomaly_xgb_<git短哈希>.joblib           主模型
-  anomaly_logistic_<git短哈希>.joblib      可解释基线
-  anomaly_isoforest_<git短哈希>.joblib     无监督基线
-  anomaly_isoforest_scale_<git短哈希>.joblib  无监督分数的归一化区间
-  anomaly_type_xgb_<git短哈希>.joblib      三分类归因
-  anomaly_meta.json                        阈值、特征列表、schema 哈希、指标、top 特征
-  dataset/anomaly.parquet                  训练集（84.7 万行 × 78 维）
-  dataset/anomaly_meta.json                切分点、归一化基线、每设备行数
-ml/evaluation/reports/                     （进 git，论文与答辩要引用）
-  YYYYMMDD_anomaly.json                    全部指标（机器可读，供 F 块接口返回）
-  YYYYMMDD_anomaly.md                      可粘贴进验收文档的 Markdown 摘要
-```
+## 3. 数据现状基线
 
-**图改为前端渲染**（原计划的 `_confusion.png` / `_pr_curve.png` 取消）：
-出图要引 matplotlib，属技术栈外的新依赖，按 AGENTS.md 第 2 节不能擅自加。
-混淆矩阵在终端与 Markdown 里用文本 2×2 表达，图形版由 4.2 批的前端 AI 页用 ECharts 画。
-详见偏差 **D-12**。
+> **本节全部数字为 2026-11-25 02:37:30 UTC 的同一时刻快照**，取数命令见附录 A。
+> 遥测表每条 tick 增长 14 行（约 7 行/秒），所以行数与会随时间变化；**其余表的量级是稳定的**。
+> 复核时若行数落在 ±1% 内属正常，若量级变了（比如订单从 220 变成 2,200）说明数据被重新回填过，需要更新本节。
 
-### 5.9 推理接入与降级（G-01）
+### 3.1 七张表的实测规模
 
-`app/services/ml_anomaly.py`：
+| 表 | 行数 | 时间跨度 | 说明 |
+|---|---|---|---|
+| `device_telemetry` | **4,565,384** | 2026-11-17 13:25 ~ 2026-11-25 02:37（**7.55 天**） | 14 台设备 / 2 秒采样 / 7 行每秒 |
+| `anomaly_injection` | **1,029** | 同上 | 三类注入真值区间，训练标签的唯一来源 |
+| `alarms` | **722** | 同上 | TEMPERATURE 463 / VIBRATION 144 / CURRENT 115；**未解除 0 条**（模拟器会自动恢复） |
+| `production_orders` | **220** | 计划时间 11-17 13:25 ~ 11-24 13:25（**恰好 7 天**） | 已完成 216 / 未完成 4 |
+| `maintenance_records` | **3** | 2026-11-24 09:35 ~ 12:05（**同一天 2.5 小时**） | 2 完成 + 1 进行中；**模拟器不产生维护记录，只有人工点击才写** |
+| `model_versions` | **1** | 2026-11-24 21:43 | 当前生效版本 `anomaly-20261124-2143-9ab70b7` |
+| `anomaly_scores` | **24,851** | 2026-11-25 01:08 ~ 02:15 | 其中判为异常 588 行；**离线存档**，页面不读这张表（偏差 D-18） |
 
-```python
-# 伪代码，说明契约
-def load() -> Model | None:
-    """启动时调用一次。返回 None 表示降级。"""
+存储占用（`device_telemetry`）：**总量 1,000 MB = 表 445 MB + 索引 554 MB**。
+索引比表还大——这一点直接决定了 §6.5 的压缩比必须分口径报，否则会得出虚高的数字。
 
-def score_rows(rows: list[dict]) -> list[float] | None:
-    """返回 None 表示本批不评分，调用方保持原阈值规则行为。"""
-```
+### 3.2 三条硬约束（建模方案必须围绕它们设计）
 
-降级条件（任一满足即降级，**不抛异常、不影响后端启动**）：
+来自 4.1 批的实测，不是理论推演：
 
-1. `artifacts/` 下找不到模型文件；
-2. `joblib.load` 失败（sklearn 版本不匹配是最常见原因）；
-3. 计算出的特征向量维度或顺序与 artifact 里的 schema 哈希不一致；
-4. 评分过程中出现任何异常（捕获后记 warning 日志）。
-
-**降级必须是静默且可观测的**：接口 `/api/v1/ml/model-info` 返回 `{"loaded": false, "reason": "..."}`，前端据此显示「模型未加载，当前为阈值规则」而不是假装有模型。
-
-### 5.10 批量打分写入 `anomaly_scores`
-
-```sql
-CREATE TABLE IF NOT EXISTS anomaly_scores (
-  device_id  VARCHAR(16) NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
-  ts         TIMESTAMPTZ NOT NULL,
-  score      DOUBLE PRECISION NOT NULL,        -- 0~1
-  is_anomaly BOOLEAN NOT NULL,
-  label_type VARCHAR(24),                       -- 归因结果，NULL 表示判为正常
-  model_id   VARCHAR(64) NOT NULL,              -- 对应 model_versions.model_id
-  PRIMARY KEY (device_id, ts)
-);
-```
-
-**只写测试段的分数**（占 15% 时间），不全量回写——目的是给前端画曲线和核对指标，不是给生产用。写之前先 `TRUNCATE`，保证可重复执行。
-
-## 6. F 块：前端落地
-
-### 6.1 新增接口契约
-
-| 接口 | 返回 | 用途 |
+| 约束 | 实测依据 | 对方案的强制要求 |
 |---|---|---|
-| `GET /api/v1/ml/model-info` | `{loaded, model_id, trained_at, dataset_rows, metrics:{pr_auc, f1_macro, precision, recall}, degraded_reason}` | AI 页顶部指标卡 |
-| `GET /api/v1/ml/anomaly/scores?device_id&start&end` | `{device_id, start, end, points:[{ts, score, is_anomaly, label_type}], max_points}` | AI 页分数曲线 |
-| `GET /api/v1/ml/anomaly/confusion` | `{matrix:[[..]], labels:[..], threshold}` | AI 页混淆矩阵 |
+| **① 极端不均衡** | 训练集 848,112 行中正例 14,266 行（**1.68%**） | 主指标必须是 **PR-AUC** 与宏平均 F1。用 accuracy 或 ROC-AUC 会给出漂亮假象 |
+| **② 相邻行高度相关** | 同一段注入覆盖几十到几百个连续采样点 | 必须**按时间切分**，随机切分只能作反面对照。实测随机切分虚高 **+0.0123**（偏差 D-17 还修掉了跨切分区间的泄漏） |
+| **③ 注入密度是演示设定** | 1,029 个区间 / 7.55 天 ≈ **每 10.6 分钟一次异常** | 前端文案必须写明"注入密度为演示设定，不代表真实工厂异常率"，否则模型指标会被误读 |
 
-三条都遵守 `spec_phase2.md` 的查询保护（时间范围必填、单次最多 5000 点）。
+### 3.3 三块数据的天花板（这是 D / E / B 三块降级的依据）
 
-### 6.2 AI 页改造（`frontend/src/pages/AiInsight.tsx`）
+这三组数字是 v2.0 与 v1.0 最大的分歧来源。v1.0 假设"数据够用"，实测下来三块各自撞到天花板：
 
-把第 456 行的灰色虚线框替换为「模型输出」区，新布局自上而下：
+**D 块（故障风险）——标签只有 3 条**
 
-1. **声明条（改写，不是新增）**：从「本阶段不含任何模型推理」改成
-   「模型基于模拟器注入真值训练，指标为离线测试集结果；注入密度为演示设定，不代表真实工厂异常率。」
-   —— 这段文案把第 1.2 节的结论 3 直接摊在页面上，是合规要求（AGENTS.md 规则 12）。
-2. **模型指标卡 ×4**：PR-AUC / 宏 F1 / 检出率 / 每小时误报。每张卡下角标 `测试集 N 行 / 正例 M 行`。
-3. **混淆矩阵**：ECharts heatmap，标出选定的阈值。
-4. **四模型对比柱**：阈值规则 / 逻辑回归 / IsolationForest / XGBoost 的 PR-AUC 并排，让"为什么用 XGBoost"一眼可见。
-5. **异常分数曲线**：选一台设备，折线是 score，背景色块是注入真值区间。这张图是全页最有说服力的——能直接看到"模型抓到的和真值为准的区域是否对得上"。
-6. **保留原有真值甘特与真值 vs 告警对比柱**，不删。它们是模型的对照物，删了就没法复核。
-
-**红线**：页面上出现的每一个数字，都必须能追到 `/ml/*` 接口的一次真实返回。不许有写死的指标，不许有"示意"数字。第 3 阶段 10.2-12 已经用脚本断言过这一条，本阶段沿用同一个断言并加强。
-
-### 6.3 降级态
-
-`model-info` 返回 `loaded: false` 时，整个模型区换成一行提示「模型未加载（原因：xxx），当前告警仍由阈值规则产生」，其余真值区块照常显示。**不许白屏，不许显示 0**。
-
-## 7. B 块：TimescaleDB 迁移与压缩比实测
-
-### 7.1 镜像替换（G-05）
-
-`postgres:16` 不含扩展，必须换。`docker-compose.yml` 改：
-
-```yaml
-services:
-  db:
-    image: timescale/timescaledb:2.17.2-pg16   # 锁版本，不用 latest
+```
+maintenance_records：3 行
+  CNC-03  REPAIR     更换 X 轴伺服驱动器  11-24 09:35 ~ 10:05
+  CNC-02  ROUTINE    更换主轴润滑油      11-24 10:35 ~ 11:05
+  ROB-01  INSPECTION 季度点检（进行中）   11-24 12:05 ~
 ```
 
-**迁移方式：dump → 换镜像 → restore**，不用数据卷原地升级（镜像变了，数据目录格式可能不兼容）：
+3 行、3 台设备、同一天、三种不同类型。**既训不出分类器，也无法验证任何风险分数是否正确**——没有任何一列可以当作"这个分数对不对"的答案。用 `alarms` 当标签也不行：告警本身就是阈值规则的输出，拿它当标签等于让模型学规则。
+
+**E 块（产量预测）——两个粒度都不宽裕**
+
+| 粒度 | 可用样本 | 实测依据 | 判断 |
+|---|---|---|---|
+| 小时 × 产线 | 660 格中 **440 格为空（66.7%）** | 空格占三分之二，绝大多数格子答案是 0，模型会退化成"永远预测 0" | **不可用** |
+| 固定 4 小时槽位 | **48 格，42 格有单，6 格空**；单格订单数 1~12 | 订单按每 4 小时一批、每产线 1 单生成（220 单 = 55 批） | **勉强可用**，主粒度 |
+| 天级 | **8 个日历桶，7 个完整日** | 首尾两天不完整 | 可用作对照，不能单独建模 |
+
+> 这条实测推翻了 v1.0 的隐含前提「小时级有连续产量序列」。**没有**。E 块的验收因此改成"是否显著优于最笨基线"，而不是"预测得多准"。
+
+**B 块（TimescaleDB）——压缩口径**
+
+> **2026-11-25 施工后按实测修正**（原判断有误，见偏差 D-28 / D-29）。原写法是"压缩只作用于 heap，索引不会变小"，
+> 实测相反：压缩把索引一起压小了 6.75 倍（486 → 72 MB），并产生 94 MB 的 toast 占用。
+> 因此体积口径从三个扩为**四个**：表 / 索引 / toast / 总量。
+
+迁移与压缩的实测体积（4.57M 行，见 §6.5）：
+
+| 状态 | 表 | 索引 | toast | 总量 |
+|---|---|---|---|---|
+| 普通表（迁移前） | 446 MB | 555 MB | ~0 | 1,001 MB |
+| hypertable 未压缩 | 444 MB | 486 MB | 0 | 930 MB |
+| hypertable 压缩后 | 67 MB | 72 MB | 94 MB | 234 MB |
+
+两个结论必须分开说：
+
+1. **迁移本身**（未压缩）就把 1,001 MB 降到 930 MB（-7%），原因是重建消除了堆与索引的膨胀。**这部分不算压缩收益**，所以压缩比的分母必须用 930 MB，不能用 1,001 MB。
+2. **压缩**把 930 MB 降到 234 MB。按总量算 **3.97:1**，按表口径算 **6.63:1**。两个数都要报——单报表口径会忽略 toast 与索引，单报总量会被未压缩的最新块摊薄。
+
+### 3.4 写入吞吐实测（Kafka 决策的核心依据，4.5 批直接引用）
+
+| 项 | 数值 | 来源 |
+|---|---|---|
+| 设计负载 | **7 行/秒** | 14 台设备 ÷ 2 秒采样 |
+| 模拟器实测平均写入速率 | **6.71 行/秒** | 模拟器退出时的统计块（运行 1,144.6 秒 / 7,686 行） |
+| 单 tick 端到端延迟 | **7 ~ 34 ms**（14 行/次） | 模拟器每 tick 打印的 `latency` |
+| **单请求吞吐上限** | **26,186 行/秒** | 见下 |
+
+吞吐上限的测法（2026-11-25 实测，可复现）：
+
+```
+POST /api/v1/telemetry/batch，单请求 5,000 行（接口上限 settings.telemetry_max_points = 5000）
+设备 CNC-01，正常区间内的值（temp 62 / vib 2.0 / current 7.5 / speed 1500），
+时间戳放在 2026-10-01 之后的历史空窗（该时段无真实数据，测完按 ts 区间 DELETE 清理）
+跑 3 次取中位数：
+
+第 1 次：墙钟 190.9 ms | 接口 elapsed_ms=120 | accepted=5000
+第 2 次：墙钟 154.4 ms | 接口 elapsed_ms=123 | accepted=5000
+第 3 次：墙钟 202.0 ms | 接口 elapsed_ms=172 | accepted=5000
+
+中位墙钟 190.9 ms → 26,186 行/秒
+```
+
+清理核对：测试行 15,000 → `DELETE` → 剩余 0；`min(ts)` 回到 2026-11-17；告警数仍为 722（写入的是正常值，未触发任何告警）。
+
+**这个数说明什么**：当前 HTTP 直写的余量是设计负载的 **3,700 倍**。Kafka 要解决的问题（削峰、解耦、多消费方）在这个余量下不存在。§4.5 的决策记录与 §7 的提纲都建立在「7 行/秒 vs 26,186 行/秒」这一组对比上。
+
+> **口径说明**：26,186 行/秒是**单连接、串行、单请求**的结果，不是并发压测。真实并发会更高，但不作承诺——本阶段的结论只需要"远大于 7 行/秒"这一个方向。
+
+---
+
+## 4. 批次计划 4.1 ~ 4.7
+
+七批，每批单独验收，一批不合格不进下一批。4.1 / 4.2 已交付，这里按"实现事实"回填，**不再当作待办**。
+
+批次之间的依赖只有一条：**4.4 必须在 4.3 之后**（要压缩，先得是 hypertable）；其余各批互不阻塞。
+4.5 只产出文档，可以在任何时间插入，不影响其他批。
+
+### 4.1 异常检测训练（已完成）
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 用注入真值训出替代阈值规则的异常检测模型，并证明它比规则强、且强得不是靠数据泄漏 |
+| **输入** | `device_telemetry` 7 天 423 万行、`anomaly_injection` 1,029 个区间、`config/devices.json` 正常区间 |
+| **交付物** | `ml/common/{db,features,split,metrics}.py`、`ml/anomaly_detection/{build_dataset,train,evaluate}.py`、`artifacts/anomaly_xgb_<commit>.joblib` + `anomaly_meta.json`、`ml/evaluation/reports/*.json` 与 `*.md` |
+| **硬指标（已达成）** | 训练集 848,112 行 / 78 维 / 正例 1.68%；测试集 127,206 行 / 正例 2,175；主模型 PR-AUC **0.9859**、Recall **0.9830**、Precision 0.9063，对比阈值规则 0.9098 / 0.8028；随机切分对照虚高仅 **+0.0123**；`evaluate.py` **22 项自检全过** |
+| **预计工作量** | 已完成（实测约 3.5 小时，含一次回填 173.7 秒与两次因内存重跑） |
+| **风险** | 内存是最大约束（可用 1.5 GB）；已用逐设备处理 + 10 秒抽稀（偏差 D-13）解决 |
+
+### 4.2 后端接入 + AI 页（已完成）
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 让模型在页面上可见，且**页面上每个数字都能追到一次接口返回** |
+| **输入** | 4.1 的 artifact；第 3 阶段的 `/ai` 页（当时只有真值展示） |
+| **交付物** | `app/services/ml_anomaly.py`、`app/routers/ml.py`（三接口）、`model_versions` + `anomaly_scores` 两张表、`AiInsight.tsx` 重写、`scripts/acceptance-ai.mjs`（42 项） |
+| **硬指标（已达成）** | `acceptance-ai.mjs` **42/42**；降级态可复现（拦截 `/ml/model-info` 后页面切降级、无 0、无白屏、0 条 JS 异常）；同窗重放一致；前端 86 tests、后端 24 passed、无回归 |
+| **预计工作量** | 已完成（实测约 4.5 小时，含 6 个缺陷的定位与修复） |
+| **风险** | 已发生的风险：heatmap 缺 visualMap 导致整页白屏（D-20）、`areaStyle` 盖住真值色块（D-21） |
+
+### 4.3 TimescaleDB 迁移
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 在不丢一行数据的前提下把 `device_telemetry` 换成 hypertable，并留下可回滚的备份 |
+| **输入** | 4,565,384 行 / 1,000 MB 的现有库；`docker-compose.yml`（`postgres:16`） |
+| **交付物** | `docker-compose.yml` 镜像改为 `timescale/timescaledb:2.17.2-pg16`；`database/migrate_timescale.sql`（可重复执行）；`backup/pre_timescale.dump`；迁移前后行数与体积对照表 |
+| **硬指标** | ① 迁移前后 `count(*)` 差异 **= 0**（迁移期间须停模拟器，否则数字对不上）；② `timescaledb_information.hypertables` 中 `device_telemetry` 存在且 `num_chunks ≥ 7`；③ 抽查 14 台设备各 1 小时，`count` 与 `min/max(ts)` 与迁移前完全一致；④ dump 文件 **> 0 字节**且能 restore 到临时库（回滚路径验证）；⑤ 三条回归全过：pytest 24 / `acceptance-batch2` 24 / `acceptance-motion` 17 |
+| **预计工作量** | 约 3 小时（dump/restore 约 1 小时，回归与核对约 2 小时） |
+| **风险** | ① 镜像换掉后数据目录不兼容，必须 dump→重建卷→restore，**不能原地升级**；② 忘记删主键会直接报 `cannot create a unique index without the column "ts"`（§6.3）；③ restore 走 stdin 时 `pg_restore` 容易写错管道；④ 迁移期间模拟器若在写，行数校验必然不齐 |
+
+### 4.4 TimescaleDB 压缩与查询对比实验
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 用同一批数据、同一组查询，量出压缩到底省了多少空间、快了多少 |
+| **输入** | 4.3 完成后的 hypertable；迁移前的三口径体积（4.3 已采） |
+| **交付物** | 压缩脚本（`SELECT compress_chunk(...)`）；三口径体积对照表；四个代表性查询的 `EXPLAIN (ANALYZE, BUFFERS)` 原始输出；一段人话结论 |
+| **硬指标** | ① 体积必须报**三个口径**：表 / 索引 / 总量，且压缩前后各一组；② 压缩比同时给**表口径**与**总量口径**；③ 四个查询各跑 **3 次取中位数**，迁移前后各一遍，原始输出入档；④ `hypertable_compression_stats` 输出入档；⑤ 压缩后三条回归仍全过 |
+| **预计工作量** | 约 2.5 小时（压缩本身快，四个查询 × 3 次 × 两遍是主要时间） |
+| **风险** | ① 只报总量会把压缩比摊薄（索引占 55%），结论失真；② 压缩后若查询未走 chunk 剪枝，耗时可能反而变慢——如实记录；③ 24 小时全表查询在压缩块上可能触发解压，耗时不降反升 |
+
+### 4.5 Kafka 可行性测算与决策记录
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 用实测数字回答"这个系统该不该上 Kafka"，并把答案固化成一份可被质疑的决策记录 |
+| **输入** | §3.4 的吞吐实测（7 行/秒 vs 26,186 行/秒）；`docker-compose.yml` 现状（仅 db 一个服务） |
+| **交付物** | **`docs/decision_kafka.md` 一份文档**。不含任何 Kafka 代码、不改 compose、不新增依赖 |
+| **硬指标** | ① 文档按 §7 的 8 个章节成文，每章都回答提纲里列的问题；② 必含 4 个数字：实测单请求吞吐、设计负载、对比倍数、重评触发倍数 N；③ 必含成本清单（容器/代码/故障点/工期）四项；④ `git diff --name-only` 结果**只有 `docs/decision_kafka.md`**（这条用来证明"真的没动代码"）；⑤ 全文不得出现"可选 / 预留 / 以后可以接"这类模糊表述（用 §8 的禁令原文校验） |
+| **预计工作量** | 约 2 小时（压测复跑 20 分钟 + 写作 100 分钟） |
+| **风险** | ① 容易写成"Kafka 很好但我们用不上"的感想，必须用提纲约束成证据链；② Kafka 单分区容量只能引用公开资料量级，**不能伪装成本项目实测**，必须显式标注来源 |
+
+### 4.6 D 块：数据可行性评估 + 演示级剩余寿命指示
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 先说清"3 条维护记录能做什么、不能做什么"，再给一个**明确标注不具备预测能力**的最小实现 |
+| **输入** | `maintenance_records` 3 行、`alarms` 722 行、`anomaly_scores` 24,851 行、`device_telemetry` 振动序列 |
+| **交付物** | `docs/feasibility_fault_risk.md`（可行性报告）；`ml/fault_risk/trend.py`（振动趋势外推，输出 0~1 的"趋势指示"与剩余时间估计）；`app/routers/ml.py` 新增 `/ml/fault-risk`；**AI 页新增「设备健康」区块**（§9 已确认，与模型输出同页，复用降级文案机制）；`scripts/acceptance-fault-risk.mjs`（断言两个免责文案真的渲染出来） |
+| **硬指标** | ① 报告写出 4 个数：维护记录 3 条、覆盖设备 3 台、时间跨度 2.5 小时、可构造的正例上限 3；② 明确回答"为什么不做监督分类"并给出上述数字；③ 趋势脚本对 14 台设备全部产出结果，无 NaN、无负值；④ 页面上 `getByText('演示级')` 与 `getByText('不具备预测能力')` 可命中（脚本断言，不靠人工看）；⑤ pytest 与两套页面验收无回归 |
+| **预计工作量** | 约 5 小时（报告 2 小时 + 实现 2 小时 + 验收脚本 1 小时） |
+| **风险** | ① 最容易滑向"既然是 AI 模块就得有模型"，一旦写出准确率就是在造假；② 振动趋势外推在设备停机段会失真，必须显式排除 STOPPED 区间；③ 页面文案若漏掉"演示级"，等于默认它有预测能力 |
+
+### 4.7 E 块：产量预测与最笨基线对比
+
+| 项 | 内容 |
+|---|---|
+| **目标** | 回答"这点数据到底能不能预测产量"，答案很可能是"不能"，但那也要有对比表支撑 |
+| **输入** | `production_orders` 220 单（计划时间恰好 7 天）；两个粒度：4 小时槽位 48 格 / 42 格有单，天级 7 个完整日 |
+| **交付物** | `ml/production_forecast/{dataset,baselines,evaluate}.py`；对比表（模型 vs 至少 3 个最笨基线）；一段结论，含"是否显著"的明确判断 |
+| **硬指标** | ① 基线不少于 3 个，且必须包含**全局均值**与**上一槽位值（persistence）**这两个最笨的；② 报告 MAPE 与 MAE，且**模型与每个基线并排**；③ 给出显著性判断：能检验就报检验统计量与 p 值，样本不足以检验就**明确写"样本量不足，无法判断显著性"**；④ 结论必须直说"显著 / 不显著"，不显著时**禁止**用"趋势向好""具备参考价值"等模糊措辞替代；⑤ 若最终结论是"模型未优于基线"，报告里必须保留该结论，不得删表 |
+| **预计工作量** | 约 5 小时（数据集与基线 2 小时 + 评估 1 小时 + 结论与文档 2 小时） |
+| **风险** | ① 42 个样本做时间序列，任何调参都极易过拟合，**禁止按测试集调参**；② 4 小时槽位单格订单数 1~12 波动大，MAPE 在真值为 0 或极小时会爆炸，需先定义分母为 0 的处理规则；③ 最大风险是"为了让数字好看而反复试模型"，本批的验收标准明确为"对比表完整 + 结论诚实"，不是"指标高" |
+
+---
+
+## 5. 每批的验收命令与预期输出
+
+约定：
+
+- 命令默认在**仓库根目录、PowerShell** 中执行；数据库命令假设容器名 `sftwin-db`、库名 `smartfactory`、用户 `sf`。
+- **Git Bash 用户注意**：`/database/xxx.sql` 会被 MSYS 当成 Windows 路径改写，需先 `export MSYS_NO_PATHCONV=1`，或写成 `//database/xxx.sql`。这是本机实测踩过的坑。
+- 凡是脚本能断言的，**不许写"人工确认"**；确实无法自动化的集中在 §5.8。
+- 预期输出里带 `≈` 或给出区间的，说明该数字随时间或机器状态浮动，验收看量级与方向，不看最后一位。
+
+### 5.1 4.1 批：异常检测训练（已完成，复跑用）
+
+```powershell
+cd D:\wbproject\2026-11-24-10-02-56
+.\.venv\Scripts\Activate.ps1
+python -m ml.anomaly_detection.build_dataset      # 约 33 秒
+python -m ml.anomaly_detection.train              # 约 65 秒
+python -m ml.anomaly_detection.evaluate           # 22 项自检
+```
+
+预期：
+
+```text
+build_dataset：导出 848,112 行 × 78 列 parquet
+train        ：四模型指标表 + artifacts/anomaly_xgb_<commit>.joblib + anomaly_meta.json
+evaluate     ：22 项自检全部 PASS；主模型 PR-AUC ≈ 0.9859、Recall ≈ 0.9830
+```
+
+判定：`evaluate` **退出码 0**，且输出里 `FAIL` 出现 0 次。出现任何 FAIL 说明训练产物与报告不自洽，不许继续用该 artifact。
+
+### 5.2 4.2 批：后端接入 + AI 页（已完成，复跑用）
+
+前置：后端、模拟器、前端、CDP Chrome（`--remote-debugging-port=9222`）都在跑。
+
+```powershell
+node scripts\acceptance-ai.mjs
+node scripts\acceptance-batch2.mjs
+node scripts\acceptance-motion.mjs
+cd frontend; npm run test; cd ..
+```
+
+预期：
+
+```text
+acceptance-ai.mjs       合计 42 项，通过 42，失败 0
+acceptance-batch2.mjs   合计 24 项，通过 24，失败 0
+acceptance-motion.mjs   合计 17 项，通过 17，失败 0
+npm run test            9 files / 86 tests passed
+```
+
+判定：三个脚本退出码均为 0 且"失败 0"。`acceptance-ai.mjs` 里「全程无页面运行时异常」必须 PASS——它专门抓 heatmap 缺 visualMap 这类渲染期崩溃（偏差 D-20）。
+
+### 5.3 4.3 批：TimescaleDB 迁移
+
+**第一步：迁移前先采基线（此时还没换镜像）**
+
+```powershell
+# 先停模拟器，否则迁移期间还有新行进来，行数校验永远对不上
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT count(*), min(ts), max(ts) FROM device_telemetry;"
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT pg_size_pretty(pg_total_relation_size('device_telemetry')) AS total, pg_size_pretty(pg_relation_size('device_telemetry')) AS tbl, pg_size_pretty(pg_indexes_size('device_telemetry')) AS idx;"
+```
+
+预期（当前基线）：
+
+```text
+ count     |             min           |             max
+-----------+---------------------------+---------------------------
+ 4,565,384 | 2026-11-17 13:25:06+00    | 2026-11-25 02:37:30+00
+ total   |  tbl   |  idx
+---------+--------+--------
+ 1000 MB | 445 MB | 554 MB
+```
+
+**第二步：备份并校验备份不是空的**
 
 ```powershell
 docker exec sftwin-db pg_dump -U sf -d smartfactory -Fc > backup\pre_timescale.dump
-docker compose down
-docker volume rm <项目名>_sftwin_pgdata
-docker compose up -d
-Get-Content database\schema.sql | docker exec -i sftwin-db psql -U sf -d smartfactory
-docker exec -i sftwin-db pg_restore -U sf -d smartfactory --data-only < backup\pre_timescale.dump
+(Get-Item backup\pre_timescale.dump).Length
 ```
 
-> `pg_restore` 走 stdin 时要用 `docker exec -i ... pg_restore -` 或先把备份 `docker cp` 进容器。实测时确认这一点，别写错。
+预期：**实测 78,476,537 字节（约 75 MB）**，custom + gzip 格式。
+判据：**> 10 MB**，且 `pg_restore -l` 能列出 TOC（98 个条目）。接近 0 或列不出 TOC，立刻停手——回滚路径已经断了。
 
-### 7.2 迁移 SQL（`database/migrate_timescale.sql`）
+> 初稿把预期写成「> 100 MB」是估的，实际 78 MB：遥测数据重复度高，gzip 后压得很狠。见偏差 D-26。
 
-**关键前置：必须先删主键。** hypertable 要求所有唯一索引都包含分区列 `ts`，而现有 `device_telemetry` 的主键是 `id`（不含 `ts`），直接 `create_hypertable` 会报
-`cannot create a unique index without the column "ts" (used in partitioning)`。
+**第三步：换镜像并重建库**
 
-已核实：后端 `app/services/telemetry_service.py` 是裸 SQL（`INSERT ... RETURNING id`），没有 ORM 模型依赖主键约束，所以删主键安全；`RETURNING id` 仍然可用（`id` 列与序列保留，只是不再唯一约束）。
+```powershell
+docker compose down
+docker volume ls                                   # 确认真实卷名，不要照抄占位名
+docker volume rm <上一步看到的卷名>
+docker compose up -d
+docker exec sftwin-db pg_isready -U sf -d smartfactory
+```
+
+预期：`/var/run/postgresql:5432 - accepting connections`
+
+**第四步：建表 → 恢复数据 → 执行迁移脚本**
+
+```powershell
+Get-Content database\schema.sql | docker exec -i sftwin-db psql -U sf -d smartfactory
+docker exec -i sftwin-db pg_restore -U sf -d smartfactory --data-only < backup\pre_timescale.dump
+Get-Content database\migrate_timescale.sql | docker exec -i sftwin-db psql -U sf -d smartfactory
+```
+
+预期：restore 无 `ERROR`；迁移脚本打印 `CREATE EXTENSION`、`ALTER TABLE`，`create_hypertable` 返回 hypertable 的 id。
+
+**第五步：校验（四查）**
+
+```powershell
+# ① 行数与时间范围必须与第一步完全一致
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT count(*), min(ts), max(ts) FROM device_telemetry;"
+
+# ② hypertable 与分块数
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT hypertable_name, num_chunks FROM timescaledb_information.hypertables WHERE hypertable_name='device_telemetry';"
+
+# ③ 逐设备抽查：14 台各取最近 1 小时，行数应接近 1800（1 小时 ÷ 2 秒）
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT device_id, count(*) FROM device_telemetry WHERE ts >= now() - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1;"
+
+# ④ 主键已删、唯一约束仍在（迁移能成功的前提，见 §6.3）
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT conname, contype FROM pg_constraint WHERE conrelid='device_telemetry'::regclass ORDER BY conname;"
+```
+
+预期：
+
+```text
+① 行数 = 第一步的数字（差异 0）；min/max(ts) 完全一致
+② device_telemetry | 9        （数据跨 9 个 UTC 日历日 → 9 个 chunk，实测值）
+③ 14 行，计数在 1700~1800 之间（模拟器启停会少几个点）
+④ 只剩 uq_telemetry_device_ts（contype = u）与 fk_telemetry_device（contype = f），没有 device_telemetry_pkey
+```
+
+> ② 的 9 而不是 8：chunk 按 UTC 日界切分，数据从 11-17 13:25 到 11-25 02:50，横跨 9 个日历日（首尾两天不完整）。
+>
+> **跑过 pytest 之后会变成 10**，且多出一个 `range_start = 2020-03-01` 的空 chunk。这不是数据异常：
+> `test_over_5000_points_is_downsampled` 用固定时间戳 2020-03-01 造 5100 个点验证降采样，
+> `purge` fixture 只删行、不删 chunk，TimescaleDB 也不会因为它空了就自动回收（偏差 D-37）。
+> 判断"chunk 数对不对"时要先看这个空 chunk 在不在。
+
+**第六步：三条回归必须全过**
+
+```powershell
+python -m pytest tests -q          # 先停 uvicorn！见下方注意
+node scripts\acceptance-batch2.mjs
+node scripts\acceptance-motion.mjs
+```
+
+预期：`24 passed`、`24 / 24`、`17 / 17`。
+
+> ⚠️ 跑 pytest 前必须停掉 uvicorn：两个进程抢写告警表会让冷却类用例随机失败（实测出现过 `assert 2 == 1`）。这不是代码 bug。
+
+### 5.4 4.4 批：压缩与查询对比
+
+```powershell
+# ① 迁移后、压缩前的四口径体积（注意用 hypertable_detailed_size，不是 pg_*，见 §6.5）
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT pg_size_pretty(table_bytes) AS 表, pg_size_pretty(index_bytes) AS 索引, pg_size_pretty(toast_bytes) AS toast, pg_size_pretty(total_bytes) AS 总量 FROM hypertable_detailed_size('device_telemetry');"
+
+# ② 压缩「1 天以前」的块（本阶段手工调用，不装后台 job）
+#    压缩块在 TS 2.17 上其实可写，但会让回填重写已压好的历史块、压缩率下降（§6.4）
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT count(*) FROM (SELECT compress_chunk(c) FROM show_chunks('device_telemetry', older_than => INTERVAL '1 day') c) t;"
+
+# ③ 压缩后再采一次四口径 + 逐块明细
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT pg_size_pretty(table_bytes) AS 表, pg_size_pretty(index_bytes) AS 索引, pg_size_pretty(toast_bytes) AS toast, pg_size_pretty(total_bytes) AS 总量 FROM hypertable_detailed_size('device_telemetry');"
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT chunk_name, range_start::date AS 起, pg_size_pretty(total_bytes) AS 大小, is_compressed FROM chunks_detailed_size('device_telemetry') c JOIN timescaledb_information.chunks i USING (chunk_name) ORDER BY range_start;"
+```
+
+预期（实测值，4.57M 行）：
+
+```text
+压缩前：表 444 MB / 索引 486 MB / toast 0      / 总量 930 MB
+压缩后：表  67 MB / 索引  72 MB / toast 94 MB / 总量 234 MB
+逐块：7 个旧块 is_compressed=t（各约 7~15 MB），最新 2 个块仍为 f
+```
+
+> 压缩后**索引也一起变小了**（486 → 72 MB）。这与"索引不参与压缩"的直觉相反，实测如此，写报告时按实测写。
+
+**④ 查询耗时：固定窗口 + 四次执行 + 五个查询**
+
+窗口**锚定在固定时间戳**（本阶段用迁移前的 `max(ts)` = `2026-11-25 02:50:10+00`），不用 `now()`，否则三个状态之间窗口会漂移。每个查询跑 4 次：第 1 次预热不计，后 3 次取中位数。
+
+```powershell
+docker exec -it sftwin-db psql -U sf -d smartfactory
+```
 
 ```sql
--- 1) 换扩展
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+\timing on
+-- Q1 单设备最近 1 小时曲线（前端最常用）
+SELECT ts, temperature, vibration, current, speed FROM device_telemetry
+WHERE device_id='CNC-01' AND ts >= '2026-11-25 02:50:10+00'::timestamptz - INTERVAL '1 hour' ORDER BY ts;
 
--- 2) 去掉不含 ts 的主键（唯一性由 uq_telemetry_device_ts 保证，它含 ts）
-ALTER TABLE device_telemetry DROP CONSTRAINT IF EXISTS device_telemetry_pkey;
+-- Q2 全厂最近 1 小时平均温度（总览 KPI）
+SELECT device_id, avg(temperature) FROM device_telemetry
+WHERE ts >= '2026-11-25 02:50:10+00'::timestamptz - INTERVAL '1 hour' GROUP BY device_id;
 
--- 3) 转 hypertable，按天分块
-SELECT create_hypertable('device_telemetry', 'ts',
+-- Q3 某设备 24 小时按分钟聚合（生产页）
+SELECT time_bucket('1 minute', ts) AS m, avg(temperature) FROM device_telemetry
+WHERE device_id='CNC-01' AND ts >= '2026-11-25 02:50:10+00'::timestamptz - INTERVAL '24 hours' GROUP BY 1 ORDER BY 1;
+
+-- Q4 全表按小时计数（回填校验用）
+SELECT time_bucket('1 hour', ts) AS h, count(*) FROM device_telemetry GROUP BY 1 ORDER BY 1;
+
+-- Q5 【必须有】冷数据查询：固定查 2026-11-20 全天，该块在压缩态下是压缩块
+SELECT time_bucket('1 hour', ts) AS h, avg(temperature), max(vibration), count(*)
+FROM device_telemetry
+WHERE device_id='CNC-01' AND ts >= '2026-11-20 00:00:00+00' AND ts < '2026-11-21 00:00:00+00'
+GROUP BY 1 ORDER BY 1;
+```
+
+> **Q5 不是可选项。** Q1~Q3 的窗口都落在最新的未压缩块上，根本碰不到压缩块；只测这四个会得出"压缩对查询毫无影响"的错误结论。
+> 实测 Q5 三态中位数：**6.08 ms（普通表）/ 5.94 ms（hypertable 未压缩）/ 3.23 ms（压缩）**，
+> 压缩相对普通表 **-47%**，而 hypertable 本身几乎没变——压缩的查询收益全在这个查询上体现。
+
+预期：五个查询各 4 个 `Time:` 值（1 预热 + 3 计），**20 个原始值全部入档**；三个状态各一遍，共 60 个值。
+
+判定：
+
+1. 四个体积口径**都记录了**，缺任何一个视为未完成；
+2. 每个查询三次的波动 **< 30%**；超过说明环境不干净，需重测（§5.8 第 1 项）。**Q4 波动可达 17%，必须测两遍**；
+3. 结论一句话里必须同时出现"压缩前 X MB / 压缩后 Y MB / 压缩比 Z:1 / 查询从 A ms 到 B ms"四个数；
+4. 必须说明趋势方向，**分查询类型**（实测结论，见 §6.5）：
+   - **扫描类查询**：压缩明确变快——Q4 全表聚合 96.77 → 66.53 ms（**-31%**）、Q5 冷数据单设备 6.08 → 3.23 ms（**-47%**）；
+   - **点查类查询**：压缩没有收益甚至略慢——Q1 单设备 1 小时 0.45 → 0.67 ms、Q2 全厂均温 3.38 → 3.96 ms，但绝对差 ≤ 0.6 ms，工程上可忽略；
+   - **Q3（24 小时聚合）**：5.61 → 4.84 ms（-14%），介于两者之间。
+   不许笼统写"性能提升"，必须按上面的分类写清楚"哪类查询快多少、哪类没有变化"。
+
+### 5.5 4.5 批：Kafka 决策记录
+
+```powershell
+# ① 文档存在且按提纲成文（二级标题数应为 8）
+(Select-String -Path docs\decision_kafka.md -Pattern '^## ').Count
+
+# ② 四个必需数字逐个数（每个都应 ≥ 1；不合并计数，避免两个数字同处一行时漏判）
+'26,186','7 行/秒','3,700','1,200' | ForEach-Object {
+  "{0} → {1}" -f $_, (Select-String -Path docs\decision_kafka.md -Pattern $_ -SimpleMatch).Count
+}
+
+# ③ 验证"真的没动代码"：本次改动只应有这一个新文件
+git status --porcelain
+
+# ④ 验证没有模糊表述残留（应输出 0 行）
+(Select-String -Path docs\decision_kafka.md -Pattern '可选地接|预留接口|以后可以接|未来可接|可选方案').Count
+```
+
+预期：
+
+```text
+① 8
+② 26,186 → ≥1   7 行/秒 → ≥1   3,700 → ≥1   1,200 → ≥1
+③ ?? docs/decision_kafka.md      ← 只有这一行；不得出现 M app/  M data_pipeline/  M docker-compose.yml
+④ 0
+```
+
+判定：③ 是关键。只要 `git status` 里出现 `docker-compose.yml` 或 `data_pipeline/` 的改动，本批即不合格——那说明"只写文档"没做到。
+
+### 5.6 4.6 批：D 块可行性 + 演示级指示
+
+```powershell
+# ① 可行性报告存在且含关键数字（命中数应 ≥ 3）
+(Select-String -Path docs\feasibility_fault_risk.md -Pattern '3 条|3 台|2.5 小时').Count
+
+# ② 趋势脚本对 14 台设备全部产出，无 NaN、无负值
+python -m ml.fault_risk.trend --all
+
+# ③ 接口可用
+curl "http://127.0.0.1:8000/api/v1/ml/fault-risk?device_id=CNC-01"
+
+# ④ 页面上的"演示级""不具备预测能力"必须真的渲染出来（脚本断言，不靠肉眼）
+node scripts\acceptance-fault-risk.mjs
+```
+
+预期：
+
+```text
+① ≥ 3
+② 14 行输出，每行含 device_id + 趋势指示(0~1) + 依据窗口；无 nan / inf / 负值
+③ HTTP 200，JSON 含 "disclaimer":"演示级，不具备预测能力"
+④ 合计 N 项，通过 N，失败 0
+```
+
+判定：④ 里必须有两条断言分别命中"演示级"与"不具备预测能力"。**这两条不许删**——它们是这块唯一能防止被误读的机制。
+
+### 5.7 4.7 批：E 块产量预测与基线对比
+
+```powershell
+python -m ml.production_forecast.evaluate
+```
+
+预期输出必须包含（缺一项即不合格）：
+
+```text
+【粒度】4 小时槽位：48 格 / 42 格有单；天级：8 桶 / 7 个完整日
+【对比表】列 = 基线名 | MAPE | MAE，至少四行：
+  全局均值（最笨基线） / 上一槽位值 persistence（最笨基线） / 最近 3 槽移动平均 / 模型
+【显著性】检验统计量与 p 值；或「样本量不足（n=42），无法判断显著性」
+【结论】显著 / 不显著（二选一）
+```
+
+判定：
+
+1. 基线 ≥ 3 个，且必须含 `全局均值` 与 `persistence`；
+2. 模型与每个基线**在同一张表**里并排；
+3. 结论句必须是"显著"或"不显著"之一。**模型没赢时，对比表一行都不许删**；
+4. 全文不得出现"趋势向好 / 初步有效 / 具备参考价值 / 有一定指导意义"这类替代词（`Select-String` 校验，命中即不合格）。
+
+### 5.8 人工检查（无法自动化的部分，单列）
+
+以下三项脚本给不出结论，必须人看。**每项都写清看什么、怎么判**：
+
+| # | 检查项 | 看什么 | 判定标准 | 为什么不能自动化 |
+|---|---|---|---|---|
+| 1 | 压缩前后耗时的**可比性** | §5.4 里每个查询的 3 个原始时间值 | 三次波动 < 30% 才可信；超过则重测 | 机器负载（Docker / WSL / Chrome）影响耗时，脚本无法判断"这一轮环境是否干净" |
+| 2 | 压缩后 **24 小时窗口的页面手感** | 设备监控页切 1h / 6h / 24h | 切换后 < 2 秒出图、无长时间白屏 | 无头环境是软渲染，帧率与手感测不出真实值 |
+| 3 | D 块趋势指示的**语义合理性** | 把 CNC-01 的振动曲线与该设备的趋势指示并排看 | 指示值升高时肉眼也能看出振动在爬升；不允许"曲线平稳但指示接近 1" | 演示级外推没有真值可比，只能靠人判断"讲不讲得通" |
+
+> 这三项要在验收文档里各留一行人工结论（谁、哪天、看到什么），不能空着。
+
+---
+
+## 6. TimescaleDB 迁移细则
+
+### 6.1 镜像版本与替换路径
+
+| 项 | 值 | 理由 |
+|---|---|---|
+| 镜像 | **`timescale/timescaledb:2.17.2-pg16`** | 锁到小版本，不用 `latest`。`postgres:16` 官方镜像**不含** timescaledb 扩展，`CREATE EXTENSION timescaledb` 会报 `could not open extension control file` |
+| 扩展预加载 | 官方镜像已设 `shared_preload_libraries=timescaledb` | 若换自建镜像，必须自己加，否则 `CREATE EXTENSION` 报 "must be loaded via shared_preload_libraries" |
+| 替换方式 | **dump → 重建卷 → restore**，不做原地升级 | 镜像换了，数据目录格式与 WAL 兼容性无法保证。原地升级失败时旧数据也一起坏 |
+
+> 版本号在动工当天再确认一次镜像可拉取（`docker pull timescale/timescaledb:2.17.2-pg16`）。拉不到就换同 major 的可用 tag，并记进偏差表——**不许悄悄改成 `latest`**。
+
+### 6.2 `create_hypertable` 的写法与 `migrate_data` 的含义
+
+```sql
+SELECT create_hypertable(
+         'device_telemetry',        -- 表名
+         'ts',                      -- 时间分区列
          chunk_time_interval => INTERVAL '1 day',
-         migrate_data => true);
+         migrate_data => true
+       );
+```
 
--- 4) 压缩：按设备分组、按时间倒序
+三个参数各自的理由：
+
+| 参数 | 取值 | 为什么 |
+|---|---|---|
+| 时间列 | `ts` | 唯一单调递增的列。`id` 虽然近似递增，但语义上是代理键，且回填时乱序写入，不能当分区键 |
+| `chunk_time_interval` | **1 天** | 当前 7.55 天 ≈ 8 个 chunk（实测 §5.3 预期 `num_chunks = 8`）。太小（1 小时）→ 180 个 chunk，查询规划开销大；太大（7 天）→ 只有 1~2 个 chunk，压缩粒度粗、chunk 剪枝失效 |
+| `migrate_data` | **`true`，必须** | 表里已有 456 万行。对非空表不设 `true`，`create_hypertable` 会拒绝执行（多数版本报 `table is not empty`）；即便某个版本容忍，已有行也不会被搬进 chunk，会出现"数据还在、hypertable 里查不到"的怪状态。这一项没有第二种选择 |
+
+`migrate_data => true` 的两个实际影响，动工前必须知道：
+
+1. **会取 ACCESS EXCLUSIVE 锁**，整个搬迁期间该表不可读不可写。456 万行的搬迁时间在几十秒到几分钟量级——**必须先停模拟器**，否则后端写入会被阻塞甚至超时。
+2. **搬迁不是事务回滚安全的**。脚本中途失败会留下"部分已转 chunk"的状态。所以迁移脚本必须可重复执行（全部 `IF EXISTS` / `IF NOT EXISTS`），失败后直接从 dump 重来，不要在半个状态上打补丁。
+
+### 6.3 为什么 `uq_telemetry_device_ts` 允许直接转换，而主键必须先删
+
+这是整个迁移唯一的硬门槛，写清楚免得后来人反复踩。
+
+**规则**：hypertable 上的**每一个唯一索引/唯一约束，都必须包含全部分区列**。本项目分区列是 `ts`。
+
+对照现有两个约束：
+
+| 约束 | 定义 | 含 `ts`？ | 结果 |
+|---|---|---|---|
+| `device_telemetry_pkey` | `PRIMARY KEY (id)` | ❌ | **必须先删**，否则 `create_hypertable` 报 `cannot create a unique index without the column "ts" (used in partitioning)` |
+| `uq_telemetry_device_ts` | `UNIQUE (device_id, ts)` | ✅ | **可以直接转换**，不用动 |
+
+**为什么含 `ts` 就真的能保证全局唯一**（不是"TimescaleDB 网开一面"）：
+
+hypertable 的唯一索引是**按 chunk 各自建立**的，不是全局一个 B 树。看起来这会破坏唯一性，但 chunk 是按 `ts` 的区间切分的——**同一个 `ts` 只可能落在唯一一个 chunk 里**。
+所以 `(device_id, ts)` 的重复项如果存在，必然出现在同一个 chunk 内，而该 chunk 内的唯一索引会挡住它。
+结论：只要唯一键包含分区列，跨 chunk 的唯一性由"时间区间互不重叠"天然保证。
+
+反例（说明规则的边界）：假如唯一键是 `(device_id, running_status)` 这种不含 `ts` 的组合，同一个值可能散落在多个 chunk，任何单 chunk 内的索引都管不到别的 chunk，全局唯一就无法实现——TimescaleDB 因此直接拒绝，不是保守。
+
+**顺带说清三件相关的事**：
+
+1. **删主键不影响 `RETURNING id`**。后端 `telemetry_service.py` 是裸 SQL `INSERT ... RETURNING id`，`id` 列、`NOT NULL`、序列默认值都保留，只是不再有唯一约束。已核实代码没有 ORM 模型依赖主键。
+2. **`ON CONFLICT (device_id, ts) DO NOTHING` 依然可用**。后端批量写入与回填都依赖这个幂等路径，迁移后必须重跑一次写入验证（第 2 阶段 7.8 那条命令），确认 `duplicated` 计数仍正常。
+3. **外键方向可以保留，反向不行**。`fk_telemetry_device` 是「hypertable → 普通表 `devices`」方向，TimescaleDB 支持；反过来（普通表的外键**指向** hypertable）不支持。所以以后若有表想引用遥测表，方案要重做，不能直接加外键。迁移后 `\d device_telemetry` 要能看到 `fk_telemetry_device` 仍在。
+
+### 6.4 压缩策略
+
+```sql
 ALTER TABLE device_telemetry SET (
   timescaledb.compress,
   timescaledb.compress_segmentby = 'device_id',
   timescaledb.compress_orderby   = 'ts DESC'
 );
-
--- 5) 7 天前的块自动压缩（本阶段手工调用，不装后台 job）
--- SELECT compress_chunk(c) FROM show_chunks('device_telemetry', older_than => INTERVAL '7 days') c;
 ```
 
-脚本必须**可重复执行**（全部 `IF EXISTS` / `IF NOT EXISTS`），且第 2 步要先查一次 `pg_constraint` 判断主键是否已删。
-
-### 7.3 压缩比实测方案
-
-在**回填 7 天（约 500 万行）之后**做，这个量级下压缩才有意义。记录四组数字：
-
-| 阶段 | 命令 | 记什么 |
+| 参数 | 取值 | 选择依据 |
 |---|---|---|
-| 迁移前（普通表） | `pg_total_relation_size` / `pg_relation_size` / `pg_indexes_size` | 三行 |
-| 迁移后未压缩 | 同上 | 三行 |
-| 全量压缩后 | 同上 + `SELECT * FROM hypertable_compression_stats('device_telemetry')` | 三行 + 压缩前后 chunk 数 |
-| 查询耗时 | 见 7.4 | 四个查询 × 3 次中位数 |
+| `compress_segmentby` | `device_id` | 按设备分段。前端与接口的查询**几乎都带 `device_id`**（`/devices/{id}/telemetry`、`/ml/anomaly/scores`），分段后能按段剪枝，只需解压命中的那几段。若不分段，任何查询都要解压整个 chunk |
+| `compress_orderby` | `ts DESC` | 段内按时间倒序。前端查"最近 N 条"时能顺序读到最近的记录，不必解压全段；时间戳单调，delta 编码的压缩率也最高 |
+| 不加 `running_status` 到 segmentby | — | 只有 3 个取值，加进去会让段数翻三倍、每段变小，压缩率下降；而本系统没有"按状态查时序"的需求 |
 
-结论写成一句人话：「500 万行遥测在普通表占 X MB，转 hypertable 并压缩后占 Y MB，压缩比 Z:1，同一查询从 A ms 降到 B ms」。这句话进 README 与论文。
+**压缩块可写入，但不是免费的**（2026-11-25 实测修正，见偏差 D-30）：
 
-### 7.4 查询耗时对比（四个代表性查询）
+- TimescaleDB 2.17 **支持**对压缩块做 INSERT / UPDATE / DELETE。实测往已压缩的 `_hyper_1_5_chunk`（`is_compressed=t`）插入一行，语句返回 `INSERT 0 1`，查询立刻可见，删除也正常（验证后已清理，行数回到 0）。
+- 所以"回填跨进压缩边界会失败"这个说法**不成立**。真正的代价是**性能**：写入压缩块需要定位并重写压缩批次，比写普通块慢，且会打乱压缩率。
+- 结论不变但要改理由：压缩边界仍应设成 7 天，目的不是"避免报错"，而是**避免让回填去重写已经压好的历史块**（重写后压缩率下降、还可能留下碎片）。大批量回填历史时，先 `decompress_chunk` 再回填、回填完重新压，仍然是更快更干净的做法。
+
+**本阶段不装后台 job**（`add_compression_policy` 不做）。理由是压缩策略一旦自动化，出问题（比如把正在回填的块压掉）时排查成本远高于每天手工跑一次。这条记在 §8 的"明确不做"里。
+
+**迁移后必须 `ANALYZE`**：
 
 ```sql
--- Q1 单设备最近 1 小时曲线（前端最常用）
-SELECT ts, temperature, vibration, current, speed FROM device_telemetry
-WHERE device_id='CNC-01' AND ts >= now() - INTERVAL '1 hour' ORDER BY ts;
--- Q2 全厂最近 1 小时平均温度（总览 KPI）
-SELECT device_id, avg(temperature) FROM device_telemetry
-WHERE ts >= now() - INTERVAL '1 hour' GROUP BY device_id;
--- Q3 某设备 24 小时按分钟聚合（生产页）
-SELECT time_bucket('1 minute', ts), avg(temperature) FROM device_telemetry
-WHERE device_id='CNC-01' AND ts >= now() - INTERVAL '24 hours' GROUP BY 1 ORDER BY 1;
--- Q4 全表按小时计数（回填校验用）
-SELECT time_bucket('1 hour', ts) h, count(*) FROM device_telemetry GROUP BY 1 ORDER BY 1;
+ANALYZE device_telemetry;
 ```
 
-每个查询用 `EXPLAIN (ANALYZE, BUFFERS)` 跑 3 次取中位数，**迁移前后各一遍**，原始输出贴进验收文档。
+不做这一步，`pg_statistic` 还停留在迁移前的普通表状态，chunk 剪枝与连接顺序可能选错，查询耗时对比会得到一组没有意义的结果。§5.4 的所有耗时测量**必须在 `ANALYZE` 之后**进行。
 
-### 7.5 回滚
+### 6.5 压缩前后的测量方法
 
-保留 `backup/pre_timescale.dump`。回滚 = 换回 `postgres:16` 镜像 + 重建卷 + restore。**迁移前必须确认 dump 文件大小正常**（不是 0 字节），否则回滚路径断了。
+**体积：四个口径，且分两个阶段用不同函数**
 
-## 8. A 块：Kafka
+第一阶段（迁移前，普通表）——用 `pg_*`：
 
-### 8.1 拓扑
-
-```
-模拟器 --produce--> [factory.telemetry, 3 分区, key=device_id] --consume--> telemetry_consumer
-                                                                              |
-                                                                              v
-                                                              save_telemetry()（复用，不改）
+```sql
+SELECT pg_size_pretty(pg_total_relation_size('device_telemetry')) AS 总量,
+       pg_size_pretty(pg_relation_size('device_telemetry'))       AS 表,
+       pg_size_pretty(pg_indexes_size('device_telemetry'))        AS 索引;
 ```
 
-- 镜像 `apache/kafka:3.9.0`，**KRaft 模式**（不装 Zookeeper，少一个容器）。
-- 分区数 3，按 `device_id` 哈希：同一设备的数据严格有序（滑窗特征依赖顺序）。
-- 副本 1（单机）。
+第二阶段（迁移后，hypertable）——**必须改用 `hypertable_detailed_size()`**：
 
-### 8.2 生产者改造
+```sql
+SELECT pg_size_pretty(table_bytes) AS 表,
+       pg_size_pretty(index_bytes) AS 索引,
+       pg_size_pretty(toast_bytes) AS toast,
+       pg_size_pretty(total_bytes) AS 总量
+FROM hypertable_detailed_size('device_telemetry');
+```
 
-模拟器加参数 `--sink {http,kafka}`，**默认仍是 `http`**。这样第 2 阶段的所有验收命令、`start-all.ps1` 全部零改动，Kafka 是显式开关而不是默认路径。
+> **为什么必须换函数**（实测踩到，偏差 D-27）：转成 hypertable 后，数据都在 chunk 里，父表只是一个空壳。
+> `pg_total_relation_size('device_telemetry')` 返回 **24 kB**、`pg_relation_size` 返回 **0 bytes**，
+> 而 `hypertable_size()` 返回 930 MB。继续用 `pg_*` 会得出"迁移后体积缩小 40000 倍"这种荒谬结论。
 
-`data_pipeline/kafka_sink.py` 负责 produce，`data_pipeline/http_client.py` 保持不动。
+四个口径各自回答什么：
 
-### 8.3 消费者
-
-`data_pipeline/consumers/telemetry_consumer.py`：
-
-- `enable_auto_commit=False`，处理成功后才 `commit`（至少一次语义）。
-- 批量取 `max_poll_records=100` 或攒 500 ms，然后调一次 `save_telemetry()`。
-- 重复投递由 `ON CONFLICT (device_id, ts) DO NOTHING` 兜住，天然幂等——这是第 2 阶段设计留下的红利，要在文档里点明。
-
-### 8.4 验收判据
-
-| 判据 | 命令/方法 | 阈值 |
+| 口径 | 回答什么问题 | 为什么必须单独记 |
 |---|---|---|
-| 数据量不丢 | 切 sink 前后各测 60 秒，库内增量行数对比 | 差 ≤ 1 个 tick |
-| 端到端延迟 | 生产者带 `produced_at`，消费者落库时间减之 | P95 < 1000 ms |
-| 积压可恢复 | 停消费者 2 分钟再启 | 积压清零，无数据丢失 |
-| HTTP 路径未被破坏 | 第 2 阶段 7.8 命令原样重跑 | 与改前一致 |
+| 表（`table_bytes`） | 压缩算法本身的效果 | 用它与表口径压缩前相比，得到 6.63:1 |
+| 索引（`index_bytes`） | 索引占了多少 | **实测压缩会把索引一起压小**（486 → 72 MB），这与"索引不参与压缩"的常识相反 |
+| toast（`toast_bytes`） | 压缩数据落在哪 | 压缩态下 94 MB 全在 toast 里。漏掉这一项，表 + 索引 139 MB 加起来对不上总量 234 MB |
+| 总量（`total_bytes`） | 磁盘实际省了多少 | 答辩与 README 用这个数，但它被"未压缩的最新块"摊薄 |
 
-## 9. D 块：故障风险
+**耗时：固定窗口 + 四次执行 + 两次测量**
 
-### 9.1 标签现实（这是本块降级的理由）
+规则（每条都有原因）：
 
-「未来 N 分钟内该设备是否会进 ALARM」的标签只能来自 `alarms` 表：**全库只有 53 条**（TEMP 27 / VIB 15 / CURRENT 11），分布在 14 台设备 32 小时上。回填 7 天后约 300~400 条，对逐设备监督学习仍然严重不足（单设备只有 20~30 个正例）。
+1. **窗口必须锚定在固定时间戳**，不能用 `now()`。实测中 `now()` 会随测量推进而漂移，三个状态之间窗口不一致，结果无法比较。本阶段锚定 `'2026-11-25 02:50:10+00'`（迁移前的 `max(ts)`）。
+2. **同一 SQL 文本、同一连接**，改一个空格都是另一个查询。
+3. **四次执行**：第一次是冷缓存，排除；后三次取中位数。
+4. **Q1~Q4 之外必须加一个 Q5（冷数据查询）**。实测发现 Q1~Q3 的窗口都落在最新的未压缩块上，**根本不会碰到压缩块**，只用这四个查询会得出"压缩对查询毫无影响"的错误结论。Q5 固定查 `2026-11-20` 全天（该块已压缩）。
+5. **Q4 必须测两遍**。全表扫描的波动实测可达 17%（同一状态两次测量 216.8 ms 与 252.9 ms），单次中位数不足以下结论。
 
-### 9.2 第一版做法（不做监督学习）
+判定门槛见 §5.4：每个查询三次波动 **< 30%** 才可信。
 
-**规则聚合版风险打分**，输入是 C 块的异常分数与阈值规则输出：
+### 6.6 回滚与失败判定
 
-```
-risk(d, t) = 0.5 × 异常分数(近 5 分钟最大值)
-           + 0.3 × 近 1 小时内该设备告警次数归一化
-           + 0.2 × 该设备当前是否已处于 WARNING
-```
-
-输出 0~1，分三档（低 / 中 / 高）。**必须在页面上写明「规则聚合，不是监督模型」**，与 C 块明确区分。
-
-若回填后单设备正例超过 100 条，再考虑上监督模型 —— 这是 L 组，不阻断。
-
-### 9.3 为什么坚持这个降级
-
-用 53 条标签训出来的"故障预测模型"在测试集上大概率能报出漂亮的数字（因为测试集也就十几条），但那是噪音。答辩被问"你的样本量够吗"，答"不够，所以我退成规则聚合并写清了边界"，比硬上一个假模型强。这条判断要写进论文的局限性章节。
-
-## 10. E 块：产量预测
-
-- 数据：`production_orders` 52 单，按**小时 × 产线**聚合实际产量。
-- 目标：预测未来 1~4 小时的产量。
-- 基线三个：① 昨日同时段；② 最近 3 小时移动平均；③ 该产线历史均值。
-- 主模型：XGBoost 回归（`reg:squarederror`）。
-- 指标：**MAPE** + MAE，且必须与三个基线并排。模型打不过移动平均时**如实写进文档**，不美化。
-- 特征：小时（0-23）、星期几、产线 one-hot、过去 1/3/6 小时产量、过去 1 小时该产线平均设备利用率、过去 1 小时告警数。
-
-> 52 单的样本量做时间序列预测非常勉强。本块的验收标准是"流程与对比表完整"，不是"预测很准"。这一点提前写清，避免最后为了数字好看去调参过拟合。
-
-## 11. 验收清单
-
-每块一条命令，输出必须能贴进验收文档。
+**回滚路径**（迁移前就已确定，不临时想）：
 
 ```powershell
-# C 块：训练（可重复，固定随机种子）
-python -m ml.anomaly_detection.build_dataset      # 预期：导出 N 行 × 78 列 parquet
-python -m ml.anomaly_detection.train              # 预期：四个模型指标表 + artifacts/
-python -m ml.anomaly_detection.evaluate           # 预期：报告 JSON + 2 张 PNG
-python -m ml.anomaly_detection.score              # 预期：anomaly_scores 写入 M 行
-
-# F 块：接口与页面
-curl http://127.0.0.1:8000/api/v1/ml/model-info
-node scripts\acceptance-ai.mjs                    # 新增，断言页面上每个数字都能追到接口
-
-# B 块：迁移与压缩
-docker exec -i sftwin-db psql -U sf -d smartfactory -f /database/migrate_timescale.sql
-docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT * FROM hypertable_compression_stats('device_telemetry');"
-
-# A 块：Kafka
-docker compose up -d kafka
-python -m data_pipeline.simulator --sink kafka --duration 60
-python -m data_pipeline.consumers.telemetry_consumer --duration 60
-
-# D 块 / E 块
-python -m ml.fault_risk.train
-python -m ml.production_forecast.train
+docker compose down
+# 把 docker-compose.yml 的 image 改回 postgres:16
+docker volume rm <卷名>
+docker compose up -d
+Get-Content database\schema.sql | docker exec -i sftwin-db psql -U sf -d smartfactory
+docker exec -i sftwin-db pg_restore -U sf -d smartfactory --data-only < backup\pre_timescale.dump
 ```
 
-**全阶段回归**：第 3 阶段的 `acceptance-batch2.mjs`（24 项）与 `acceptance-motion.mjs`（17 项）必须仍全过；后端 `pytest` 8 passed。B 块换镜像后尤其要重跑这一遍——数据库换了，什么都可能变。
+**满足以下任意一条，立即回滚，不许"再试试看"**：
 
-## 12. 分批交付
+| 失败信号 | 含义 |
+|---|---|
+| 迁移后 `count(*)` 与迁移前**不一致** | 数据丢了或重复了，压缩比再好看也没意义 |
+| `timescaledb_information.hypertables` 里查不到 `device_telemetry` | 迁移根本没成功 |
+| 后端批量写入报错（尤其 `ON CONFLICT` 相关） | 幂等路径断了，回填与模拟器都会炸 |
+| 三条回归（pytest 24 / batch2 24 / motion 17）任一失败 | 数据库换了确实会影响别处，必须先恢复再排查 |
+| dump 文件为 0 或 restore 失败 | 回滚路径已断——**这一步要在迁移前就验，不能等出事才发现** |
 
-按 2.1 的顺序，每批单独验收，一批不合格不进下一批。
+回滚不是失败，是正常路径。**在迁移前把回滚演练一遍**（restore 到临时库、查一次行数、删掉临时库），比出事时现学要省一小时。
 
-| 批 | 内容 | 交付物 | 预估 |
+---
+
+## 7. Kafka 决策记录的写作提纲
+
+**本节只有提纲，不含正文。** 正文在 4.5 批产出，文件为 `docs/decision_kafka.md`，共 8 个二级章节。
+每章规定"要回答什么问题"和"必须带上哪个数字"——缺数字的章节视为未完成。
+
+| 章 | 标题 | 必须回答的问题 | 必须带的数字 |
 |---|---|---|---|
-| **4.1** | 回填 7 天 + `ml/common/*` + C 块三个基线 + 主模型 + 报告 | 指标表、PR 曲线、混淆矩阵 | 本阶段最大的一块，也是核心 |
-| **4.2** | 两张新表 + `ml_anomaly.py` 降级 + `/ml/*` 三个接口 + AI 页改造 + `acceptance-ai.mjs` | 页面截图 + 脚本全过 | 让模型可见 |
-| **4.3** | TimescaleDB 换镜像 + 迁移 + 压缩比与四个查询耗时实测 | 迁移前后对比表 | 换镜像要重建库，必须单独一批做 |
-| **4.4** | Kafka KRaft + 生产者 `--sink` + 消费者 + 四条判据 | 延迟与积压实测 | 不动现有默认路径 |
-| **4.5** | D 块规则聚合 + E 块预测与基线对比 | 两张对比表 | 允许指标不好看，如实记录 |
+| **7.1** | 结论与适用范围 | 接不接？这个结论对什么规模成立、对什么规模不成立 | 一句话结论 + 结论适用的写入量上限 |
+| **7.2** | 负载现状 | 现在的真实写入速率与延迟是多少，怎么测的 | **7 行/秒**（14 台 ÷ 2 秒）、单 tick **7 ~ 34 ms**、6.71 行/秒（模拟器统计块均值） |
+| **7.3** | 实测写入上限 | 这套架构在当前机器上最多能吞多少，是怎么测的（含清理方式） | **26,186 行/秒**（5,000 行 / 190.9 ms 中位数）、三次原始墙钟值与 `elapsed_ms` |
+| **7.4** | 与 Kafka 单分区容量的对比 | 一个分区能吞多少，与本项目的差距是多少倍 | 单分区吞吐量级（**必须标注来源**）÷ 本项目 7 行/秒 = 倍数；同时给出"本项目自己测得的上限已落在单分区量级内"这一对比 |
+| **7.5** | 上 Kafka 的成本清单 | 要付出什么：容器、代码、故障点、工期，四项都要具体 | 新增容器数 1；新增代码模块 2（生产者 + 消费者）；新增故障类型 ≥ 3（积压 / 重复消费 / 分区不均）；工期估算（人日） |
+| **7.6** | 不接的决策与替代 | 不接之后，靠什么满足削峰与可靠性；现有机制已经具备什么 | 现有 HTTP 路径的能力清单：批量（单请求 5,000 行）、幂等（`ON CONFLICT DO NOTHING`）、重试（3 次退避） |
+| **7.7** | 何时重新评估：N 的推导 | 写入规模达到多少倍时必须重新考虑，这个倍数是怎么算出来的 | **N ≈ 1,200 倍**，推导见下方公式；换算的设备台数 |
+| **7.8** | 这个结论在什么情况下不成立 | 哪些场景与吞吐无关，但会让消息队列变得必要 | 至少 2 个场景（多消费方 / 跨机房），并说明它们在本项目中是否成立 |
 
-## 13. 明确不做（第 4 阶段范围外）
+### 附注 1 · 关于 7.7：N 必须这样推导（不许拍脑袋）
 
-1. 深度学习（LSTM / Transformer / AutoEncoder）；
-2. GPU 训练与推理；
-3. 模型在线服务化（独立 ml 服务、gRPC、模型网关）；
-4. 定时重训、模型漂移监控、A/B 实验；
-5. MLflow 等实验跟踪平台；
-6. 特征存储（feature store）；
-7. 真实数据集训练（NASA C-MAPSS 可作为论文加分对照，不进验收）；
-8. 真实 IoT 接入、MQTT；
-9. 用户鉴权、多租户；
-10. 三维资产细化（`factory_models/` 仍空占位，属第 6 阶段，作者已确认）；
-11. `/assistant` 页面（方案标注"进阶"，导航继续灰显）；
-12. 移动端适配、浅色主题、国际化（第 3 阶段 L-01/02/03 维持不做）。
+```
+实测单请求吞吐        T_peak = 26,186 行/秒
+可持续稳态（留 3× 余量） T_safe = T_peak / 3 = 8,729 行/秒
+当前设计负载          L      = 7 行/秒
+重评倍数              N      = T_safe / L = 1,247 ≈ 1,200 倍
+```
 
-## 14. 冻结记录
+换算成可感知的规模，让 N 有意义：
+
+| 扩张方式 | N = 1,200 倍意味着 |
+|---|---|
+| 设备数不变、提高采样率 | 采样间隔从 2 秒降到 **1.6 毫秒**——物理上不可能，说明真正的扩张只能靠加设备 |
+| 采样率不变、加设备 | 设备数从 14 台增加到 **约 16,800 台** |
+
+**结论应写成**："当全厂设备规模达到 **1.5 万台**量级（或等价的设备数 × 采样率乘积）时，需要重新评估消息队列；在此之前，瓶颈不在写入路径。"
+
+> 这里的 3 倍余量是保守取值，不是测出来的。若有人质疑，正确的回应是"改成 1 倍会得到 N≈3,700，结论不变"——**倍数怎么取都不影响"现在不该接"这个结论**，这才是决策稳健的证据。
+
+### 附注 2 · 关于 7.4：一个诚实性要求
+
+Kafka 的单分区容量**本项目无法实测**（不装就没有数）。因此 7.4 必须写成两句不同性质的话：
+
+- "Kafka 单分区在常见硬件上的公开量级约为 X MB/s"——**标注为公开资料，不是本项目实测**；
+- "按本项目每行约 230 字节折算，X MB/s 相当于约 Y 行/秒"——**这是换算，不是测量**。
+
+不许把第二句写成"实测"或"我们测过"。**测不了就说测不了，这本身就是"不接"的理由之一**：为了写一份决策记录而先装一套 Kafka，等于用成本证明成本。
+
+---
+
+## 8. 明确不做（第 4 阶段范围外）
+
+前 12 条沿用 v1.0（编号不变），后 4 条是本次新增的**禁令**——写进来是为了防止几周后被当成"顺手补一下"重新提上来。
+
+| # | 不做 | 说明 |
+|---|---|---|
+| 1 | 深度学习（LSTM / Transformer / AutoEncoder） | 技术栈锁定 scikit-learn + XGBoost（AGENTS.md 第 2 节） |
+| 2 | GPU 训练与推理 | 无需求，本机也没有可用 GPU |
+| 3 | 模型在线服务化（独立 ml 服务 / gRPC / 模型网关） | 进程内加载已够用（G-01） |
+| 4 | 定时重训、模型漂移监控、A/B 实验 | 数据每周增长不超过训练集一半（L-01） |
+| 5 | MLflow 等实验跟踪平台 | 用 JSON 报告 + git commit 代替（L-06） |
+| 6 | 特征存储（feature store） | 训练与推理复用同一函数即可（L-02） |
+| 7 | 真实数据集训练 | NASA C-MAPSS 可作论文加分对照，不进验收（L-09） |
+| 8 | 真实 IoT 接入、MQTT | 无硬件 |
+| 9 | 用户鉴权、多租户 | 单机演示 |
+| 10 | 三维资产细化 | `factory_models/` 仍空占位，属第 6 阶段，作者已确认 |
+| 11 | `/assistant` 页面 | 方案标注"进阶"，导航继续灰显 |
+| 12 | 移动端适配、浅色主题、国际化 | 第 3 阶段 L-01/02/03 维持不做 |
+| **13** | **Kafka 接入的任何形式** | 包括：`docker-compose.yml` 里的 kafka 服务、`data_pipeline/kafka_sink.py`、`consumers/`、`--sink` 参数、分区与副本配置、"预留生产者接口"。**唯一的产物是 `docs/decision_kafka.md`** |
+| **14** | **D 块的监督学习模型** | 不许出现"故障预测准确率 / AUC / F1"这类指标。3 条维护记录不足以上报任何准确率，报出来就是造假 |
+| **15** | **E 块的精度承诺** | 不许写"预测精度达到 X%"。只能写"与基线对比的结果"，且不显著时如实写不显著 |
+| **16** | **压缩的后台 job**（`add_compression_policy`） | 压缩策略自动化后，若把正在回填的块压掉，排查成本远高于每天手工跑一次（§6.4） |
+
+---
+
+## 9. 待作者确认
+
+> **2026-11-25 作者已确认：三条全部按建议执行**（a / a / a）。本节保留问题与理由，供追溯。
+> 已生效的取值：压缩边界 **7 天**；D 块呈现位置 **AI 页新增「设备健康」区块**；E 块结论不显著时 **保留完整对比表与代码**。
+
+只剩三条真正需要人拍板的。其余都已按实测与既有决策定稿，不再回问。
+
+| # | 待确认 | 选项 | 我的建议 | 不确认的后果 |
+|---|---|---|---|---|
+| **1** | TimescaleDB 压缩边界取多少 | (a) 7 天（回填深度上限也就是 7 天，刚好够）<br>(b) 15 天（更保守，但只有约 1 个块可压缩，压缩比样本太小）<br>(c) 1 天（压缩收益最大，但回填一跨边界就会失败） | **(a) 7 天** | 定不下来 4.3 的迁移脚本就写不出最终版；实验可先用 1 天，但生产值必须定 |
+| **2** | D 块的呈现位置 | (a) AI 页新增一个"设备健康"区块<br>(b) 设备监控页每台设备加一条指示条<br>(c) 只做接口不做页面 | **(a)**：与模型输出同页，且降级态可以复用同一套文案机制 | 影响 4.6 的页面工作量（约 ±2 小时），也影响验收脚本要断言哪些文案 |
+| **3** | E 块结论若为"不显著"，模块怎么处理 | (a) 保留完整对比表与代码，作为"我们验证过"的证据<br>(b) 只保留报告，删掉代码<br>(c) 不加模块，把结论写进文档 | **(a)**：一个被证伪的假设比一句"没做"有价值得多，也是论文局限性章节的素材 | 决定 4.7 是否要建 `ml/production_forecast/` 目录 |
+
+> 这三条不阻塞 4.3——4.3 只跟第 1 条有关，且实验阶段可先按 1 天做。**第 2、3 条最晚在 4.6 / 4.7 动工前给出即可。**
+
+---
+
+## 附录 A 复核命令清单
+
+§3 里每个数字对应的取数命令。**改规格或写论文前，先跑一遍这一节**，确认基线没漂。
+
+```sql
+-- A1 各表规模与时间跨度（一条 SQL 出全部，保证同一时刻快照）
+SELECT 'telemetry' AS t, count(*)::text AS n, min(ts)::text AS lo, max(ts)::text AS hi FROM device_telemetry
+UNION ALL SELECT 'injection', count(*)::text, min(started_at)::text, max(started_at)::text FROM anomaly_injection
+UNION ALL SELECT 'alarms',    count(*)::text, min(detected_at)::text, max(detected_at)::text FROM alarms
+UNION ALL SELECT 'orders',    count(*)::text, min(planned_start)::text, max(planned_start)::text FROM production_orders
+UNION ALL SELECT 'maint',     count(*)::text, min(started_at)::text, max(started_at)::text FROM maintenance_records
+UNION ALL SELECT 'models',    count(*)::text, min(trained_at)::text, max(trained_at)::text FROM model_versions
+UNION ALL SELECT 'scores',    count(*)::text, min(ts)::text, max(ts)::text FROM anomaly_scores;
+
+-- A2 存储三口径
+SELECT pg_size_pretty(pg_total_relation_size('device_telemetry')) AS 总量,
+       pg_size_pretty(pg_relation_size('device_telemetry'))       AS 表,
+       pg_size_pretty(pg_indexes_size('device_telemetry'))        AS 索引;
+
+-- A3 告警按类型（同时看未解除数）
+SELECT alarm_type, count(*) AS n, count(*) FILTER (WHERE resolved_at IS NULL) AS 未解除
+FROM alarms GROUP BY 1 ORDER BY 2 DESC;
+
+-- A4 订单按天分布（验证"7 天、每 4 小时一批"这个生成机理）
+SELECT date_trunc('day', planned_start)::date AS 日期, count(*) AS 订单数,
+       count(DISTINCT date_trunc('hour', planned_start)) AS 有单小时数
+FROM production_orders GROUP BY 1 ORDER BY 1;
+
+-- A5 小时 × 产线网格的空缺率（E 块降级的依据，§3.3）
+WITH h AS (SELECT date_trunc('hour', planned_start) hh, line_id, count(*) n
+           FROM production_orders GROUP BY 1,2),
+grid AS (SELECT g.hh, l.line_id
+         FROM generate_series(date_trunc('hour',(SELECT min(planned_start) FROM production_orders)),
+                              date_trunc('hour',(SELECT max(planned_start) FROM production_orders)),
+                              INTERVAL '1 hour') g(hh)
+         CROSS JOIN (SELECT DISTINCT line_id FROM production_orders) l)
+SELECT count(*) AS 网格数, count(*) FILTER (WHERE h.n IS NULL) AS 空格,
+       round(100.0*count(*) FILTER (WHERE h.n IS NULL)/count(*),1) AS 空缺率
+FROM grid LEFT JOIN h ON h.hh=grid.hh AND h.line_id=grid.line_id;
+
+-- A6 维护记录全量（D 块降级的依据，就 3 行，直接看）
+SELECT record_id, device_id, maintenance_type, started_at, finished_at FROM maintenance_records ORDER BY started_at;
+```
+
+```powershell
+# A7 写入吞吐（§3.4 的方法，跑完必须清理，否则污染基线）
+#     用 python 脚本发 3 次 5000 行请求，时间戳放在 2026-10-01 之后的历史空窗
+#     清理：
+docker exec sftwin-db psql -U sf -d smartfactory -c "DELETE FROM device_telemetry WHERE ts < '2026-11-01';"
+#     核对：应返回 0；min(ts) 应回到 2026-11-17
+docker exec sftwin-db psql -U sf -d smartfactory -c "SELECT count(*) FROM device_telemetry WHERE ts < '2026-11-01';"
+
+# A8 基线漂移自检：行数落在 ±1% 内视为正常，量级变了要更新 §3.1
+```
+
+---
+
+## 附录 B 偏差表
+
+D-11 ~ D-25 是 v1.0 / v1.1 施工期产生的，**保留原编号，不重排**（`docs/acceptance_phase4.md` 里大量引用这些编号）。
+完整原文见 `docs/archive/spec_phase4_v1.1.md` 第 15 节；这里只留一句话摘要，供查阅时定位。
+
+| 编号 | 一句话 | 批次 | 状态 |
+|---|---|---|---|
+| D-11 | `requirements-ml.txt` 多了 scipy / threadpoolctl 两个间接依赖 | 4.1 | 已知，无需处理 |
+| D-12 | 训练报告的两张 PNG 改为 Markdown + 前端 ECharts（不引 matplotlib） | 4.1 | 生效中 |
+| D-13 | 训练集按 10 秒抽稀（特征仍在 2 秒分辨率上算） | 4.1 | 生效中 |
+| D-14 | 区间检出率的分母改为「可真判且有行」，四个数全报 | 4.1 | 生效中 |
+| D-15 | sklearn + scipy 报 `OptimizeWarning: iprint`，仅告警 | 4.1 | 已知 |
+| D-16 | 新增 `--limit-devices` / `--skip-random-control` 两个开关 | 4.1 | 生效中 |
+| D-17 | 跨切分区间改为剔除其验证/测试段的行（原为整段并入训练段） | 4.1 | 已修复 |
+| D-18 | `anomaly_scores` 改为离线存档，页面走实时推理 | 4.2 | 生效中 |
+| D-19 | `model_versions` 由脚本登记，接口不读写，真相源是 artifact | 4.2 | 生效中 |
+| D-20 | heatmap 必须配隐藏 visualMap + 逐格语义色 | 4.2 | 生效中 |
+| D-21 | 分数曲线去掉 `areaStyle`，纵轴保持线性 | 4.2 | 生效中 |
+| D-22 | `/ml/anomaly/scores` 不传时间范围时默认最近 1 小时 | 4.2 | 生效中 |
+| D-23 | 修第 2 阶段遗留缺陷：告警扫描游标回退 30 秒 | 4.2 | 已修复 |
+| D-24 | `acceptance-batch2` 两条断言更新 + 两处竞态修正 | 4.2 | 已修复 |
+| D-25 | `acceptance-batch2` 注入值按设备区间取值、只注入一台 | 4.2 | 已修复 |
+| **D-26** | §5.3 的 dump 体积判据由「> 100 MB」改为「> 10 MB」，实测 78 MB | 4.3 | 已修正 |
+| **D-27** | 迁移后体积测量改用 `hypertable_detailed_size()`，不再用 `pg_*` | 4.3 | 已修正 |
+| **D-28** | 压缩会把**索引一起压小**（486 → 72 MB），原「索引不参与压缩、几乎不变」判断错误 | 4.4 | 已修正 |
+| **D-29** | 压缩态出现 **94 MB toast 占用**，体积口径由三个扩为**四个**（表/索引/toast/总量） | 4.4 | 已修正 |
+| **D-30** | 压缩块**可写入**（TS 2.17 支持 DML，实测插入成功），原「压缩块不可写」判断错误；限制是性能而非报错 | 4.4 | 已修正 |
+| **D-31** | 耗时对比新增 **Q5 冷数据查询**；Q4 波动达 17%，须测两遍；窗口须锚定固定时间戳 | 4.4 | 已修正 |
+| **D-32** | `num_chunks` 实测 **9**（按 UTC 日界切分），规格预估 8 | 4.3 | 已修正 |
+| **D-33** | 迁移本身（未压缩）已把 1,001 MB 降到 930 MB（-7%，消除膨胀），压缩比的分母须用 930 而非 1,001 | 4.4 | 已记录 |
+| **D-34** | **修接口 bug**：`/ml/anomaly/scores` 回显的 `start/end` 被 `iso()` 截到整秒，而 SQL 用原始微秒查询——回显窗口 ≠ 实际查询窗口，用回显值重放会差 1 行（实测 976 vs 977，约 1/3 概率）。修法：查询前把两端归整到整秒；补 1 条回归测试（撤掉修复后该测试确实失败，已验证） | 4.4 | 已修复 |
+| **D-35** | 查询耗时测量协议修正：① 查询必须包一层 `count(*)`，只计服务端，否则客户端行格式化会主导计时；② 状态切换后必须先跑一轮丢弃（缓存/IO 尾流）；③ Q1~Q3 不触及压缩块，必须新增 Q5。**第一版"压缩后全表扫描变慢"是上述三个问题造成的假象，该结论作废** | 4.4 | 已修正 |
+| **D-36** | 前端分数曲线窗口终点后退 5 秒（`SCORE_WINDOW_SETTLE_MS`） | 4.4 | 已实施 |
+| **D-37** | 跑 pytest 后 hypertable 多出一个 `2020-03-01` 的**空 chunk**（`num_chunks` 9 → 10） | 4.4 | 已记录 |
+
+**新偏差从 D-26 起编号。** 记法：`| D-26 | 偏差内容 | 原因 | 影响 |`，并同步进对应批次的验收文档。
+
+---
+
+## 附录 C 冻结记录
 
 | 日期 | 项 | 作者决定 |
 |---|---|---|
-| 2026-11-24 | 第 4 阶段顺序 | **先模型后管道**：C → F → B → A → D → E |
-| 2026-11-24 | TimescaleDB | **迁，并做压缩比实测**（不是最小动作，也不是不迁） |
-| 2026-11-24 | G-01 ~ G-09 | **按建议值执行**（九项全部确认，逐项见 3.1） |
-| 2026-11-24 | L-10（SHAP 简化版） | 暂不做，留 P1；C 块先出 `feature_importances_` 作为可解释性的最低交付 |
+| 2026-11-24 | 第 4 阶段顺序 | 先模型后管道：C → F → B → A → D → E（**已被 2026-11-25 的 A 块降级取代**） |
+| 2026-11-24 | TimescaleDB | 迁，并做压缩比实测（不是最小动作，也不是不迁） |
+| 2026-11-24 | G-01 ~ G-09 | 按建议值执行（逐项去向见 §1.2） |
+| 2026-11-24 | L-10（SHAP 简化版） | 暂不做，留 P1；先出 `feature_importances_` 作为可解释性最低交付 |
+| **2026-11-25** | **Kafka** | **不接。** A 块从「接入」改为「可行性测算 + 决策记录」（`docs/decision_kafka.md`），不含任何 Kafka 代码，不改 compose |
+| **2026-11-25** | **TimescaleDB** | **接。** 保留 B 块，但必须写成可验收的迁移步骤 + 对比实验（拆为 4.3 / 4.4 两批） |
+| **2026-11-25** | **D 块（故障风险）** | **先做数据可行性评估**；删除一切"训练监督分类模型"的写法；改为可行性报告 + 明确标注「演示级、不具备预测能力」的最小实现 |
+| **2026-11-25** | **E 块（产量预测）** | **必须有基线对比**；写清可用的最小预测粒度；验收标准是「与最笨的基线相比是否有显著改善」，不显著就如实写不显著 |
 
-## 15. 偏差表（施工中与规格不符的记录）
+---
 
-| 编号 | 偏差 | 原因 | 影响 |
+## 附录 D 自查清单（对照作者 2026-11-25 的硬性要求）
+
+| # | 硬性要求 | 本文件是否满足 | 在哪一节 |
 |---|---|---|---|
-| D-11 | `requirements-ml.txt` 新增间接依赖 `scipy==1.18.1`、`threadpoolctl==3.8.0` | sklearn 的传递依赖，pip 自动装 | 无需处理，但需在 4.1 节注明，否则他人按文件装完发现版本对不上 |
-| D-12 | §5.8 里的两张 PNG 改为 **Markdown 摘要 + 前端 ECharts 渲染** | 出图要引 matplotlib，属技术栈外的新依赖（AGENTS.md 第 2 节要求先确认）。避免为两张图增加依赖，图改由 4.2 批的前端 AI 页画 | 本批没有 PNG 产物，但混淆矩阵有文本版、PR 对比有 Markdown 表；图在 4.2 批补齐 |
-| D-13 | 训练集按 **10 秒抽稀**（`--stride 5`），不是 2 秒全量 | 7 天 423 万行展开 78 维 float32 需约 1.3 GB，本机可用内存仅 1.5 GB（WSL2 docker 常驻 9 GB）。但**特征仍在 2 秒原分辨率上计算**再抽行，否则 15 秒窗口只剩 3 个点，40 秒的 VIB_SPIKE 会被抹平 | 训练集 84.7 万行；推理侧仍按 2 秒；每个注入区间平均仍有 42 个采样点 |
-| D-14 | 区间检出率的分母改为「**可真判且有行**的区间」，并把四段数字全部报出 | 初版用窗口内全部区间当分母，把检出率压到 40%，与行级 98% 的召回自相矛盾。实测原因：① **同一设备上下一个注入区间完全覆盖了前一个**（全库 967 个里 205 个，实测 SQL 见验收文档），数据集是一行一个 `interval_id`，后写的会盖掉先写的，被覆盖的区间在数据里连一个带自己 id 的行都没有，无法判定检出与否；② 极少数区间落在 10 秒抽样点之间 | 报告同时给 `intervals_in_window` / `intervals_absorbed_by_later` / `intervals_with_rows` / `intervals_detected` 四个数，检出率以后两者之商为准 |
-| D-15 | sklearn 1.5.2 配 scipy 1.18.1 时报 `OptimizeWarning: Unknown solver options: iprint` | scipy 新版移除了 `iprint` 参数，sklearn 仍在传；仅告警，逻辑回归结果正常（与混淆矩阵自洽） | 无功能影响，训练日志中会出现该告警，已在验收文档记录 |
-| D-16 | 新增 `--limit-devices` / `--skip-random-control` 两个规格外的命令行开关 | `--limit-devices` 用于冒烟测试（先跑 2 台确认管线通再跑全量）；`--skip-random-control` 在内存紧张时跳过对照 | 均为可选参数，默认行为与规格一致 |
-| D-17 | 跨切分点的注入区间从"整段并入训练段"改为"**剔除其在验证/测试段的行**" | 并入后训练段出现晚于验证段起点的行，三段不再时间互斥，验证指标偏乐观。**该问题由 `evaluate.py` 的"时间不重叠"断言抓到**（2026-11-24，当时报 `训练段 11:12:56 ≤ 验证段 11:11:16` 失败） | 损失 3 个区间 / 47 行正例；换来三段严格互斥。剔除数写进 `anomaly_meta.json` |
-
-| D-18 | `anomaly_scores` 表改为**离线存档**用途，前端曲线走实时推理（不读表） | 前端若读表，页面就变成"上次跑批时的快照"：换模型、补一段数据都要重跑批，而页面上看不出这份数据有多旧。改成实时推理后，页面永远反映"当前模型 + 当前数据"，也让"每个数字都能追到一次接口返回"这条红线成立（§6.2） | 新增 `ml/anomaly_detection/score_window.py` 负责批量落表；表服务于 D 块风险打分、论文复现与事后追溯 |
-| D-19 | `model_versions` 由**脚本登记**（`register_model.py`），接口不读写这张表 | 推理的唯一真相源是 `artifacts/anomaly_meta.json`——它与 joblib 文件一一对应，接口靠它校验 schema 哈希。表里再存一份就成了第二真相源，两者不一致时无法判断该信谁 | 新增 `ml/anomaly_detection/register_model.py`；表用于版本历史、"谁在生效"与 D 块按 model_id 引用，接口仍以 artifact 为准 |
-| D-20 | ECharts heatmap 必须配 `visualMap`；本实现用**隐藏的 visualMap + 逐格 itemStyle** | ECharts 5 的 heatmap 在缺 visualMap 时渲染期抛 `Heatmap must use with visualMap`，异常冒到 React 树导致**整页白屏**（2026-11-25 实测踩到，整页 innerText 为空）。另：四格按语义上色（TN/FP/FN/TP）比按数值色阶可读——TN 12 万与 FP 221 差三个数量级，线性色阶会把所有"错"的格子染成白色 | `charts/init.ts` 需注册 `HeatmapChart` / `ScatterChart` / `VisualMapComponent` / `MarkAreaComponent`；漏注册 markArea 会静默不画（不报错） |
-| D-21 | 分数曲线**去掉 `areaStyle`** 面积填充 | 尖峰冲顶时面积填充会把下方整个区域涂实：既盖住 markArea 真值色块，也盖住红色散点，第一版实测在图上只剩一个大灰块。纵轴同时保持线性 0~1——换对数轴会让 0.0079 的阈值线跑到 70% 高度，看起来像"阈值很高"，那才是真误导 | 折线 + 散点 + markArea 三件套；脚注写明"常态分数在 1e-5 量级，因此贴底" |
-| D-22 | `/ml/anomaly/scores` 的时间范围**不传时默认最近 1 小时**，比 §6.1 的「时间范围必填」宽松 | 复用 `app/utils.py` 的 `time_range()`，与 `/devices/{id}/telemetry` 用同一套查询保护（只传一个报 400、跨度 >24h 报 400）。同一系统里两套时间参数规则会让前端写两套代码 | 前端始终显式传 start/end；默认窗口只是兜底，不影响页面行为 |
-| D-23 | **修第 2 阶段遗留缺陷**：告警扫描游标加 30 秒回退窗（`_CURSOR_OVERLAP` / `scan_floor()`） | `inserted_at` 是**事务开始时间**不是提交时间。并发写入时先开始的事务可能后提交，此时它的 `inserted_at` 比已推进的游标更早，`inserted_at >= 游标` 把它永久跳过，再也不会有任何一次扫描看到它。实测：POST 的单条 94.5℃ 遥测没生成告警，重启后端（游标重置为回看 600 秒）才补判出 CRITICAL——验收脚本因此误报"注入告警后仍没有解除按钮" | 新增 `scan_floor()` 与 2 条回归测试（回退量正确、回退窗 < 冷却窗/4）；回退带来的重复扫描由 5 分钟冷却挡掉，不会重复写告警 |
-| D-24 | `acceptance-batch2.mjs` 的两条第 3 阶段断言被本批取代，另修两处竞态 | ①「声明条不含模型推理」「预留虚线框存在」在本批已不成立（模型接进来了，虚线框被替换）；②维护记录表按索引取"第二张表"，告警为空时第一张 `.table` 其实是维护表，`tables[1]` 直接 undefined；③生产 KPI 在数据到达前就断言，拿到的是「—／等待数据」 | 断言改为「声明条写明指标来源与演示性质」「模型输出区存在」；维护表**按卡片标题定位**；KPI 等到值不是「—」。改后连跑两次均 24/24 |
-| D-25 | `acceptance-batch2.mjs` 的告警注入改为「**按设备正常区间取值** + **只注入一台**」 | ①原实现把 vibration/current 写死成 2.0/9.5（那是按 CNC 阈值定的），在 INSP-01 上一次注入同时触发 TEMPERATURE/VIBRATION/CURRENT 三条告警（INSP-01 振动严重阈值只有 1.88），"解除"验收变成三选一；②"15 秒没等到告警就换下一台接着注入"会让一次运行连写 4 台设备——实测 2026-11-25 一次运行往 CNC-01/04/02/03 各写一条 95℃，事后逐条清理 | 注入温度按 `该设备正常上限 × 1.35` 算，振动/电流/转速取区间中值；只注入一台，25 秒等不到就报失败（那说明扫描任务有问题，该报错而不是继续污染数据） |
+| 1 | 只改文档，不动代码、不跑迁移、不提交 git | ✅ 仅新增 `docs/archive/` 两个归档与本文件；未执行迁移、未 commit | 全文 |
+| 2 | 所有数字来自实测或给出测量方法 | ✅ §3 全部实测；§3.4 给了吞吐测法与清理方式；§7.4 明确区分"公开资料量级"与"本项目实测" | §3、§5、§7.4 |
+| 3 | 禁止"性能显著提升"这类无数值说法 | ✅ §5.4 判定第 3 条要求结论必须含四个数字；§5.7 禁止"趋势向好"等替代词 | §5.4、§5.7 |
+| 4 | Kafka 不许以任何形式写回计划 | ✅ A 块整节废止；依赖删 `kafka-python`；§8 第 13 条把"预留接口"也明确列为禁止 | §1.1、§1.2、§8 |
+| 5 | 不承诺 D 块有预测能力 | ✅ 目标是"可行性评估 + 演示级指示"；§8 第 14 条禁止任何准确率指标；§5.6 强制断言"不具备预测能力"文案 | §4.6、§5.6、§8 |
+| 6 | 不承诺 E 块精度 | ✅ 验收标准是"是否显著优于最笨基线"；§8 第 15 条禁止写精度；§5.7 要求结论二选一 | §4.7、§5.7、§8 |
+| 7 | G-01 ~ G-09 逐条处理，不整段照抄 | ✅ 九条逐项给出"保留 / 修订 / 废止 + 一句理由"；其中 G-06 修订、其余保留并注明已实现；未出现整段照抄 | §1.2 |
+| 8 | 4.1 批已实现部分以实现为准 | ✅ §4.1 / §4.2 标注"已完成"并按实现事实回填（脚本名 `score_window`、pytest 24、PNG 废止） | §1.3、§4.1、§4.2 |
+| 9 | 保留 v1.0 原文 | ✅ `docs/archive/spec_phase4_v1.0.md`（636 行，取自 git `4d86124`）；另存 v1.1（648 行） | §0.3 |
+| 10 | 目录含 §0 ~ §9 + 人工检查单列 + 附录 | ✅ 0 / 1 / 2 / 3 / 4 / 5（含 5.8）/ 6 / 7 / 8 / 9 + 附录 A~D | 全文 |
+| 11 | 批次 4.1 ~ 4.7，每批六项齐全 | ✅ 目标 / 输入 / 交付物 / 硬指标 / 预计工作量 / 风险 | §4 |
+| 12 | 验收命令可复制，不写"人工确认"了事 | ✅ §5.1 ~ §5.7 全为可复制命令 + 预期输出 + 判定条件；无法自动化的三项单列 §5.8 并写清"看什么、怎么判" | §5 |
+| 13 | §6 六个必备要素 | ✅ 镜像版本 / create_hypertable 与 migrate_data / 唯一索引为何允许 / 压缩策略 / 三口径体积 / 三次中位数 | §6.1 ~ §6.5 |
+| 14 | §7 提纲为章节级、不含正文 | ✅ 8 章，只给"要回答什么 + 必须带什么数字"，无正文 | §7 |
+| 15 | §9 待确认 ≤ 3 条 | ✅ 恰好 3 条，且都不阻塞 4.3 | §9 |
