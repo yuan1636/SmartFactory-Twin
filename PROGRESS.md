@@ -48,7 +48,7 @@
 > 这批的三条实测结论推翻了规格原判断（`pg_total_relation_size` 只量父表、压缩**会**压小索引、压缩块**可写**），
 > 见偏差 D-27 / D-28 / D-30。别按旧文档的直觉再写一遍。
 
-### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 / D3 + 追加批（含白底改造）已交付
+### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 / D3 + 追加批已交付；D 批 R1（室内壳）已交付，R2/R3 未开始
 
 **D0 体检**（只产清单与基线，唯一代码改动是 dev-only `setCamera`，D-42）
 产出 `docs/audit_d0.md` 的 20 条问题清单（每条：截图文件 + 九宫格位置 + 现象 + 归属批次），
@@ -275,7 +275,7 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3） |
 | 施工规格：目标、七段字段、硬指标、验收命令 | `docs/spec_phase4.md` v4.0 |
 | D0 的 20 条问题清单 | `docs/audit_d0.md` |
-| 偏差 D-37 ~ D-63（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
+| 偏差 D-37 ~ D-66（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
 | 后端与数据层的规格 | `docs/spec_phase2.md` v1.1（冻结） |
 | 三维场景与五页前端的实现基线 | `docs/spec_phase3.md` v1.1（冻结） |
 | 截图与日志 | `output/d0/`、`output/d1/`、`output/d2/`、`output/d3/`、`output/env/`、`output/logs/`（本地，不进 git） |
