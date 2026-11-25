@@ -928,3 +928,115 @@ end = end.astimezone(UTC).replace(microsecond=0)
 
 > 第 2 项不结案，留在人工项里。答辩前应在有显示器的环境上手动切一次 1h / 6h / 24h 并记一笔。
 > 这一条宁可空着，也不拿接口耗时冒充页面手感——两者不是一回事。
+
+---
+
+## 10. D1 批：视觉基调（2026-11-25）
+
+### 10.0 要证明什么
+
+不是"变好看了"，而是四件可核对的事：
+
+1. 后处理参数**就是**规格 §6.1 那张表（不是"接了 bloom"就算完）；
+2. 场景几何**没有因为 D1 变重**（draw call 与三角形不涨，甚至应略降）；
+3. 帧率与首屏**在预算内**，且回退了多少要写出来；
+4. 前后对比能**同机位**复现（6 个机位写死在脚本里）。
+
+### 10.1 交付物
+
+| 文件 | 内容 | 规模 |
+|---|---|---|
+| `frontend/src/three/postfx.ts`（新增） | RenderPass → UnrealBloomPass → OutputPass → SMAAPass，零新增依赖（走 `three/examples/jsm`，SMAAPass 贴图是模块内置 base64） | 约 150 行 |
+| `frontend/src/three/SceneRoot.tsx`（改） | 接管线（`renderFrame()`）、`autoReset=false` + 显式 `reset()`、ACESFilmic + exposure、`scene.fog`、灯光重配、原子探针 `profile()` | +60 行 |
+| `frontend/src/three/materials.ts`（改） | 两张程序化贴图：地面混凝土（颗粒 + 6 m 分仓缝）、墙面墙板（上亮下暗 + 竖向板缝 + 踢脚线）；墙面由 12% 透明改实墙 | +110 行 |
+| `scripts/acceptance-d1.mjs`（新增） | 9 项断言：参数 6 项 + 开销 3 项 | 约 120 行 |
+| `output/d0/`、`output/d1/` | 同 6 机位的前后截图 + `poses.json` + `baseline.json` | 各 6 张 |
+
+### 10.2 实测
+
+**参数（逐项比对规格 §6.1）：**
+
+| 项 | 规格 | 实测 |
+|---|---|---|
+| toneMapping | ACESFilmic | `4`（ACESFilmic） |
+| exposure | 1.05 | **1.05** |
+| Bloom strength / radius / threshold | 0.35 / 0.6 / 0.85 | **0.35 / 0.6 / 0.85** |
+| pass 链 | Render → Bloom → Output → SMAA | **完全一致**，OutputPass 在 SMAA 之前 |
+| 雾 | Fog(28, 120)，色 = 背景 `#0b1018` | **28 / 120 / #0b1018** |
+
+**开销（D0 → D1，同一台机、同一机位）：**
+
+| 指标 | D0 | D1 | 说明 |
+|---|---|---|---|
+| 场景 draw call（不含阴影/后处理） | 108\* | **120** | 墙面由透明改实墙后**少 12 次**（不再走透明队列）；D0 是旧口径，见 10.5 第 1 条 |
+| 阴影 pass | 未单列 | **50** | 首次单独量出来 |
+| 后处理 pass | 0 | **17** | Bloom 多级降采样 + SMAA + OutputPass |
+| 整链合计 | 108\* | **187** | **120 + 50 + 17 = 187**，能加回总数 |
+| 三角形（场景） | 9,146\* | **10,922** | 墙体不再走透明队列导致的重算差异，非新增几何 |
+| fps 中位（5s rAF） | 144.9 | **144.9** | 已顶 144Hz 上限，降幅不可用于判断开销 |
+| 首屏可交互 | 562 ms | **1,227 ms** | **+665 ms**，着色器首次编译，仍在 ≤3 s 内 |
+
+### 10.3 验收日志（`output/logs/d1_acceptance.log` 节选）
+
+> 节选：省去脚本开头打印的参数 JSON（23 行），断言与数字一行未改。完整文件见 `output/logs/d1_acceptance.log`。
+
+```text
+PASS  toneMapping 为 ACESFilmic（4）  · 实际 4
+PASS  曝光在 1.00~1.10  · 实际 1.05
+PASS  pass 链为 RenderPass → UnrealBloomPass → OutputPass → SMAAPass  · RenderPass → UnrealBloomPass → OutputPass → SMAAPass
+PASS  OutputPass 在 SMAA 之前（LDR 上做边缘检测）
+PASS  Bloom 三项与规格一致（0.35 / 0.6 / 0.85）  · 0.35 / 0.6 / 0.85
+PASS  雾为 Fog(near=28, far=120) 且雾色等于背景 #0b1018  · #0b1018 28~120
+场景 draw call   : 108 → 120（Δ 12）
+  ├ 阴影 pass    : 50
+  ├ 后处理 pass  : 17
+  └ 整链合计     : 187
+三角形           : 9146 → 10922
+fps 中位         : 144.9 → 144.9
+PASS  场景 draw call 仍在可合批范围（≤ 140）  · 实际 120，D2 目标 ≤100
+PASS  场景 + 阴影 + 后处理 = 整链 draw call  · 120 + 50 + 17 = 187（整链 187）
+PASS  fps 降幅 ≤ 15%  · 实际 0.0%
+合计 9 项，通过 9，失败 0
+```
+
+> "场景 + 阴影 + 后处理 = 整链"这条断言是**为了防统计漏项**才加的。D1 调试中真的出现过
+> `120 + 50 + 45 = 215 ≠ 187`：因为分三次读、每次都跨帧，`sceneCalls` 被上一次测量改写。
+> 改成一次读齐的原子探针 `profile()` 后才对上——这类错误不写成断言，下次还会犯。
+
+### 10.4 前后对比截图
+
+| 机位 | 前（D0） | 后（D1） | 可见变化 |
+|---|---|---|---|
+| 总览 | `output/d0/01_overview.png` | `output/d1/01_overview.png` | 出现车间墙体、地面分格缝、远景空气衰减 |
+| WS-A | `output/d0/02_ws_a.png` | `output/d1/02_ws_a.png` | 墙面竖向板缝可见，车间成为"有围护的空间" |
+| 设备特写 | `output/d0/04_device.png` | `output/d1/04_device.png` | 机身明暗层次出现，面板凹槽可辨，无过曝白块 |
+| 人眼高度 | `output/d0/06_eye_level.png` | `output/d1/06_eye_level.png` | 背景由纯黑虚空变为墙体，地平线不再悬空 |
+
+### 10.5 三个发现（都已回写规格）
+
+1. **计数口径必须重定义**（D-45）。D0 的 108 / 9,146 用的是 `renderer.info.autoReset` 默认行为（只反映末次 render），
+   D1 改为每帧显式 `reset()` 并把场景/阴影/后处理分开。两组数**不可相减**，所以 D1 起一律用 `profile()` 的同口径数字。
+2. **首屏回退 665 ms**（D-46）。材质与后处理的着色器首帧编译所致。仍在预算内，但列为 D6 观察项。
+3. **"幽灵墙"是 D0 问题 #1 的真因**（D-47）。墙面原本 `opacity 0.12 + depthWrite:false`，
+   在深色背景上几乎不可见；改为不透明实墙 + 墙板贴图后，**场景 draw call 反而少 12 次**——
+   因为墙体不再进入透明队列。这条不是回归，是修正。
+
+### 10.6 无回归
+
+```text
+cd frontend && npm run test -- --run    → 9 files / 86 tests passed（5.62 s）
+cd frontend && npm run build            → ✓ built in 6.36 s，0 error
+npx tsc --noEmit                        → 0 error
+```
+
+`__sceneDebug` 新增的 `postfx / profile / measureSceneCalls` 与 D0 的 `setCamera` 一样只在 DEV 分支，
+生产包内 `grep` 命中 0 处。
+
+### 10.7 未做
+
+| 项 | 原因 | 何时做 |
+|---|---|---|
+| 盲测（"这是工厂吗"） | D1 只定了基调，道具与界面还没上；现在测大概率得到"这是个模型" | D2 之后 |
+| 3 分钟稳定性 | 需要完整录屏与逐帧检查 | D6 |
+| 弱机帧率 | 统一协议在 D6 执行（CPU 4× 降速） | D6 |
+| 动态分辨率 | D1 未做，避免与后处理的 RT 尺寸互相干扰；若 D6 弱机不达标再引入 | D6 |

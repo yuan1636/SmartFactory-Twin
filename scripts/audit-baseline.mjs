@@ -32,6 +32,8 @@ const INIT = `
   })();
 `;
 
+const OUT = process.argv[2] ?? 'output/d0';
+
 const main = async () => {
   const session = await connect();
   await session.send('Page.enable');
@@ -96,8 +98,8 @@ const main = async () => {
     ),
   };
 
-  mkdirSync('output/d0', { recursive: true });
-  writeFileSync('output/d0/baseline.json', JSON.stringify(result, null, 2));
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(`${OUT}/baseline.json`, JSON.stringify(result, null, 2));
 
   console.log('=== D0 性能基线 ===');
   console.log(`渲染器        : ${result.renderer}`);
@@ -106,7 +108,7 @@ const main = async () => {
   console.log(`draw call     : 三次 ${result.calls.join(' / ')}，取最大 ${result.callsMax}`);
   console.log(`三角形        : ${result.triangles}`);
   console.log(`角标 fps      : ${result.badgeFps}（仅参考，不作验收依据）`);
-  console.log('\n已写 output/d0/baseline.json');
+  console.log(`\n已写 ${OUT}/baseline.json`);
 
   if (/swiftshader|software/i.test(result.renderer)) {
     console.log('\n⚠ 检测到软件渲染（SwiftShader）：帧率数字不可用于验收，请换窗口化 Chrome 重跑。');
