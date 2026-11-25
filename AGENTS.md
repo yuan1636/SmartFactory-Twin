@@ -26,16 +26,17 @@
 | 文件 | 作用 | 状态 |
 |---|---|---|
 | `AGENTS.md` | 本项目协作规则（本文件） | 生效 |
+| `PROGRESS.md` | **交接与进度**：做过什么 / 验证到什么程度 / 下一步做什么 | 生效（换窗口或换人先读这一页） |
 | `docs/方案.md` | 项目总体方案（实验方案 V1.0）：定位、架构、数据模型、12～16 周路线、验收标准、风险边界 | 已定稿 |
 | `docs/spec_phase2.md` | 第 2 阶段实现规格（模拟器 + FastAPI + PostgreSQL） | **v1.1 已冻结、生效**（2026-11-24 修订 7.10 判定区间与 7.14 执行前置），第 1～8 节齐全，是第 2 阶段的唯一施工依据；代码已按此实现并跑通验收 |
 | `docs/acceptance_phase2.md` | 第 2 阶段验收回归记录（7.1～7.16 逐条结论 + 命令 + 实际输出） | 已完成：14 通过 / 0 不通过 / 1 未验证（7.15 真 Ctrl+C 待人工按一次） |
 | `docs/spec_phase3.md` | 第 3 阶段实现规格（React + Three.js + ECharts） | **v1.1 生效**（v1.0 于 2026-11-24 冻结；同日增补 §6.7 产线运行动画），是第 3 阶段唯一施工依据 |
 | `docs/acceptance_phase3.md` | 第 3 阶段验收记录（Batch 1 / Batch 2 / 第 3 批产线运行动画） | 10.1 八条与动画 17 项全过；Batch 2 的 24 项复跑仍全过；保留人工项：动效观感、真实帧率、滚筒停转样本 |
-| `docs/spec_phase4.md` | 第 4 阶段实现规格 | **v4.0 生效**（2026-11-25 目标改为**三维界面展示与演示能力**：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结）；偏差 D-11 ~ D-53；v1.0 / v1.1 / v2.0 归档在 `docs/archive/` |
-| `docs/acceptance_phase4.md` | 第 4 阶段验收记录（按批） | 4.1（训练）、4.2（后端 + AI 页）、**4.3（TimescaleDB 迁移）、4.4（压缩与查询对比）** 已完成；4.5~4.7 未开始 |
+| `docs/spec_phase4.md` | 第 4 阶段实现规格 | **v4.0 生效**（2026-11-25 目标改为**三维界面展示与演示能力**：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结）；偏差 D-11 ~ D-54；v1.0 / v1.1 / v2.0 归档在 `docs/archive/` |
+| `docs/acceptance_phase4.md` | 第 4 阶段验收记录（按批） | 4.1（训练）、4.2（后端 + AI 页）、4.3（TimescaleDB 迁移）、4.4（压缩与查询对比）、**D1（视觉基调）、D2（工业道具）** 已完成；D2 仅缺盲测 |
 | `ml/` | 第 4 阶段 AI 模型（common 公共件 + anomaly_detection） | 异常检测主模型 PR-AUC 0.9859 / Recall 0.9830 / Precision 0.9063（测试集 127,206 行，时间切分最后 15%）；三分类归因宏 F1 1.0（数据集事实，非泛化能力） |
 | `requirements-ml.txt` | ml 依赖（与 `requirements.txt` 分开） | 4 个直接依赖版本写死（**已删 `kafka-python`**）；间接带 scipy / threadpoolctl（偏差 D-11） |
-| `frontend/` | 前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | 五个可用页齐全 + 三维产线运行动画 + AI 页模型输出区；`npm run test` **86 passed** |
+| `frontend/` | 前端（React 18 + TS 5.6 + Vite 6 + three 0.170 + ECharts 5.5） | 五个可用页齐全 + 三维产线运行动画 + AI 页模型输出区；`npm run test` **96 passed** |
 | `scripts/` | `start-all.ps1`（一键起库/后端/模拟器/前端）、`acceptance-batch2.mjs`（CDP 页面级 24 项）、`acceptance-motion.mjs`（产线动画 17 项）、`acceptance-ai.mjs`（AI 页 42 项）、`shot.mjs`（截当前页）、`lib/cdp.mjs`（共用 CDP 底座） | 五者均已实测跑通 |
 | `tests/` | 测试网（pytest + httpx，25 个用例：`test_phase2_api.py` / `test_ml_api.py`） | **25 passed**；依赖在 `requirements-dev.txt`，不进 `requirements.txt`；**跑之前先停 uvicorn**（两进程抢写告警表会让冷却用例随机失败） |
 
