@@ -4,8 +4,10 @@
  */
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { EffectiveState } from '../utils/status';
+import { STATE_META } from '../utils/status';
 import { makeDeviceLabel, makeLineLabel, setLabelActive } from './labels';
 import {
   CORRIDOR,
@@ -18,15 +20,37 @@ import {
   WORKSHOPS,
   sizeKeyOf,
 } from './layout';
-import { createMaterials, disposeMaterials, type SceneMaterials } from './materials';
+import { createMaterials, disposeMaterials, RING_BRIGHTNESS, type SceneMaterials } from './materials';
 
 export interface DeviceVisual {
   group: THREE.Group;
-  lamp: THREE.Mesh;
-  ring: THREE.Mesh;
+  /** 状态灯在 lampMesh 实例数组中的下标（D2 合批后不再一台一个 mesh） */
+  lampIndex: number;
+  /** 地面光环在 ringMesh 实例数组中的下标 */
+  ringIndex: number;
   outline: THREE.LineSegments;
   label: CSS2DObject;
   state: EffectiveState | null;
+}
+
+/**
+ * 状态灯与光环的合并渲染器。
+ *
+ * 为什么合并：14 台设备各一个灯、各一个环，就是 28 次 draw call，占场景的四分之一。
+ * 合并成 2 个 InstancedMesh 后只剩 2 次，而"逐台不同颜色 + 呼吸/闪烁"全部靠
+ * `instanceColor` 实现——灯与环本来就是自发光 basic 材质，染色与调 opacity 在深色场景里
+ * 观感等价（见 materials.ts 的 RING_BRIGHTNESS 注释）。
+ *
+ * 代价：不能再用"换材质引用"表示状态，必须每帧写颜色。14×2 次浮点写入可忽略，
+ * 但 `instanceColor.needsUpdate` 会重传 buffer，所以做了脏检查。
+ */
+export interface StatusLights {
+  lamps: THREE.InstancedMesh;
+  rings: THREE.InstancedMesh;
+  /** 按当前状态与时间刷新实例颜色（呼吸/闪烁）；reduceMotion 时只上静态色 */
+  update: (visuals: Iterable<DeviceVisual>, t: number, reduceMotion: boolean) => void;
+  /** WS 断开：全部转灰、光环隐去（规格 8.2） */
+  disconnect: (visuals: Iterable<DeviceVisual>) => void;
 }
 
 /** 输送机滚筒：本体 + 随轴转的定位条，交给运行动画每帧更新实例矩阵。 */
@@ -45,6 +69,8 @@ export interface FactoryBuild {
   root: THREE.Group;
   devices: Map<string, DeviceVisual>;
   materials: SceneMaterials;
+  /** 合并后的状态灯与光环（D2 合批） */
+  lights: StatusLights;
   /** 输送机滚筒（按 device_id） */
   rollers: Map<string, RollerRig>;
   /** 机器人摆动枢轴（按 device_id） */
@@ -111,17 +137,23 @@ export function buildFactory(): FactoryBuild {
     root.add(mesh);
   };
 
-  const wallGeoCache = new Map<string, THREE.BoxGeometry>();
-  const makeWall = (w: number, h: number, name: string): THREE.Mesh => {
-    const key = `${w}x${h}`;
-    let geo = wallGeoCache.get(key);
-    if (!geo) {
-      geo = track(new THREE.BoxGeometry(w, h, 0.2));
-      wallGeoCache.set(key, geo);
-    }
-    const mesh = new THREE.Mesh(geo, materials.wall);
-    mesh.name = name;
-    return mesh;
+  // ---------- 墙体：全部合并成 1 个 mesh ----------
+  //
+  // 墙是静态的、同材质、无交互，8 面各占一次 draw call 纯属浪费。
+  // 把世界变换烘进顶点后合并成单个 BufferGeometry，draw call 从 8 降到 1（D2 合批）。
+  // 每面墙的 UV 仍各自 0~1，与合并前一致，视觉不变。
+
+  const wallParts: THREE.BufferGeometry[] = [];
+  const pushWall = (len: number, height: number, x: number, z: number, rotY = 0) => {
+    const geo = new THREE.BoxGeometry(len, height, 0.2);
+    geo.applyMatrix4(
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(x, height / 2, z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0)),
+        new THREE.Vector3(1, 1, 1),
+      ),
+    );
+    wallParts.push(geo);
   };
 
   for (const ws of WORKSHOPS) {
@@ -129,51 +161,50 @@ export function buildFactory(): FactoryBuild {
     const halfX = ws.sizeX / 2;
     const halfZ = ws.sizeZ / 2;
 
-    const north = makeWall(ws.sizeX, ws.height, `wall:${ws.id}:north`);
-    north.position.set(ws.x, ws.height / 2, ws.z - halfZ);
-    root.add(north);
-
-    const south = makeWall(ws.sizeX, ws.height, `wall:${ws.id}:south`);
-    south.position.set(ws.x, ws.height / 2, ws.z + halfZ);
-    root.add(south);
-
+    pushWall(ws.sizeX, ws.height, ws.x, ws.z - halfZ);
+    pushWall(ws.sizeX, ws.height, ws.x, ws.z + halfZ);
     // 东西两侧墙沿 Z 方向：长度取 sizeZ，不是 sizeX
-    for (const sign of [1, -1]) {
-      const sideGeo = track(new THREE.BoxGeometry(ws.sizeZ, ws.height, 0.2));
-      const side = new THREE.Mesh(sideGeo, materials.wall);
-      side.name = `wall:${ws.id}:${sign > 0 ? 'east' : 'west'}`;
-      side.position.set(ws.x + sign * halfX, ws.height / 2, ws.z);
-      side.rotation.y = Math.PI / 2;
-      root.add(side);
-    }
+    pushWall(ws.sizeZ, ws.height, ws.x - halfX, ws.z, Math.PI / 2);
+    pushWall(ws.sizeZ, ws.height, ws.x + halfX, ws.z, Math.PI / 2);
   }
 
   // 动力站
   addPave(POWER_STATION.x, POWER_STATION.z, POWER_STATION.sizeX, POWER_STATION.sizeZ, 'pave:AUX');
   const psHalfX = POWER_STATION.sizeX / 2;
   const psHalfZ = POWER_STATION.sizeZ / 2;
-  const psWalls: Array<[number, number, number, number]> = [
-    [POWER_STATION.x, POWER_STATION.z - psHalfZ, POWER_STATION.sizeX, 0],
-    [POWER_STATION.x, POWER_STATION.z + psHalfZ, POWER_STATION.sizeX, 0],
-    [POWER_STATION.x - psHalfX, POWER_STATION.z, POWER_STATION.sizeZ, Math.PI / 2],
-    [POWER_STATION.x + psHalfX, POWER_STATION.z, POWER_STATION.sizeZ, Math.PI / 2],
-  ];
-  for (const [x, z, len, rotY] of psWalls) {
-    const geo = track(new THREE.BoxGeometry(len, POWER_STATION.height, 0.2));
-    const mesh = new THREE.Mesh(geo, materials.wall);
-    mesh.position.set(x, POWER_STATION.height / 2, z);
-    mesh.rotation.y = rotY;
-    root.add(mesh);
-  }
+  pushWall(POWER_STATION.sizeX, POWER_STATION.height, POWER_STATION.x, POWER_STATION.z - psHalfZ);
+  pushWall(POWER_STATION.sizeX, POWER_STATION.height, POWER_STATION.x, POWER_STATION.z + psHalfZ);
+  pushWall(POWER_STATION.sizeZ, POWER_STATION.height, POWER_STATION.x - psHalfX, POWER_STATION.z, Math.PI / 2);
+  pushWall(POWER_STATION.sizeZ, POWER_STATION.height, POWER_STATION.x + psHalfX, POWER_STATION.z, Math.PI / 2);
 
+  const mergedWall = mergeGeometries(wallParts, false);
+  for (const part of wallParts) part.dispose();
+  // 合并失败会直接返回 null，静默加一个空 mesh 会让"墙不见了"查半天，所以显式抛错
+  if (!mergedWall) throw new Error('墙体几何合并失败：各段属性不一致');
+  const wallMesh = new THREE.Mesh(track(mergedWall), materials.wall);
+  wallMesh.name = 'wall:merged';
+  wallMesh.receiveShadow = true;
+  root.add(wallMesh);
+
+  // ---------- 产线色带：合并成 1 个 mesh（4 → 1）----------
+
+  const stripParts: THREE.BufferGeometry[] = [];
   for (const strip of LINE_STRIPS) {
     const len = Math.abs(strip.x2 - strip.x1);
-    const geo = track(new THREE.BoxGeometry(len, 0.15, 1.2));
-    const mesh = new THREE.Mesh(geo, materials.strip);
-    mesh.position.set((strip.x1 + strip.x2) / 2, 0.075, strip.z);
-    mesh.name = `strip:${strip.line_id}`;
-    root.add(mesh);
+    const geo = new THREE.BoxGeometry(len, 0.15, 1.2);
+    geo.translate((strip.x1 + strip.x2) / 2, 0.075, strip.z);
+    stripParts.push(geo);
+  }
 
+  const mergedStrip = mergeGeometries(stripParts, false);
+  for (const part of stripParts) part.dispose();
+  if (!mergedStrip) throw new Error('色带几何合并失败：各段属性不一致');
+  const stripMesh = new THREE.Mesh(track(mergedStrip), materials.strip);
+  stripMesh.name = 'strip:merged';
+  root.add(stripMesh);
+
+  // 标签是 CSS2DObject（DOM 层），不参与 draw call，仍需逐条建
+  for (const strip of LINE_STRIPS) {
     const label = makeLineLabel(strip.line_id);
     label.position.set((strip.x1 + strip.x2) / 2, 1.0, strip.z + 0.1);
     root.add(label);
@@ -277,34 +308,25 @@ export function buildFactory(): FactoryBuild {
     return { group, lampY };
   };
 
-  const addLampRingOutline = (group: THREE.Group, deviceId: string, lampY: number) => {
-    const lampGeo = track(new THREE.SphereGeometry(0.15, 16, 12));
-    const lamp = new THREE.Mesh(lampGeo, materials.states.RUNNING.lamp);
-    lamp.position.set(0, lampY, 0);
-    lamp.name = `lamp:${deviceId}`;
-    group.add(lamp);
-
-    const ringGeo = track(new THREE.RingGeometry(0.95, 1.2, 40));
-    ringGeo.rotateX(-Math.PI / 2);
-    const ring = new THREE.Mesh(ringGeo, materials.states.RUNNING.ring);
-    ring.position.set(0, 0.03, 0);
-    group.add(ring);
-
+  const addOutline = (group: THREE.Group, deviceId: string) => {
     const size = DEVICE_SIZES[sizeKeyOf(typeOfId(deviceId), deviceId)] ?? DEVICE_SIZES.CNC;
     const outlineGeo = track(new THREE.EdgesGeometry(new THREE.BoxGeometry(size.x, size.y, size.z)));
     const outline = new THREE.LineSegments(outlineGeo, materials.outline);
     outline.position.set(0, size.y / 2, 0);
     outline.visible = false;
     group.add(outline);
-
-    return { lamp, ring, outline };
+    return outline;
   };
+
+  // 灯与环的位置先收集，循环结束后合并成 2 个 InstancedMesh（14 + 14 → 2 次 draw call）
+  const lampSlots: Array<{ x: number; y: number; z: number }> = [];
+  const ringSlots: Array<{ x: number; z: number }> = [];
 
   for (const [deviceId, placement] of Object.entries(DEVICE_LAYOUT)) {
     const built = buildDevice(deviceId);
     if (!built) continue;
     const { group, lampY } = built;
-    const { lamp, ring, outline } = addLampRingOutline(group, deviceId, lampY);
+    const outline = addOutline(group, deviceId);
 
     group.position.set(placement.x, 0, placement.z);
     group.rotation.y = placement.rotationY;
@@ -314,8 +336,115 @@ export function buildFactory(): FactoryBuild {
     label.position.set(0, lampY + 0.55, 0);
     group.add(label);
 
-    devices.set(deviceId, { group, lamp, ring, outline, label, state: null });
+    // 灯挂在 group 局部 (0, lampY, 0)，group 只有平移与绕 Y 旋转，所以世界坐标就是 (x, lampY, z)
+    const lampIndex = lampSlots.length;
+    lampSlots.push({ x: placement.x, y: lampY, z: placement.z });
+    const ringIndex = ringSlots.length;
+    ringSlots.push({ x: placement.x, z: placement.z });
+
+    devices.set(deviceId, { group, lampIndex, ringIndex, outline, label, state: null });
   }
+
+  // ---------- 合并后的状态灯与光环 ----------
+
+  const dummy = new THREE.Object3D();
+
+  const lampGeo = track(new THREE.SphereGeometry(0.15, 16, 12));
+  const lamps = new THREE.InstancedMesh(lampGeo, materials.lampBase, Math.max(1, lampSlots.length));
+  lamps.name = 'lamp:merged';
+  lampSlots.forEach((slot, i) => {
+    dummy.position.set(slot.x, slot.y, slot.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    lamps.setMatrixAt(i, dummy.matrix);
+  });
+  lamps.instanceMatrix.needsUpdate = true;
+  // 实例散布在全场，父级只有一个 mesh，默认包围球按第一个实例算会把整批误剔除
+  lamps.frustumCulled = false;
+  root.add(lamps);
+
+  const ringGeo = track(new THREE.RingGeometry(0.95, 1.2, 40));
+  ringGeo.rotateX(-Math.PI / 2);
+  const rings = new THREE.InstancedMesh(ringGeo, materials.ringBase, Math.max(1, ringSlots.length));
+  rings.name = 'ring:merged';
+  ringSlots.forEach((slot, i) => {
+    dummy.position.set(slot.x, 0.03, slot.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    rings.setMatrixAt(i, dummy.matrix);
+  });
+  rings.instanceMatrix.needsUpdate = true;
+  rings.frustumCulled = false;
+  root.add(rings);
+
+  const ringShown: boolean[] = ringSlots.map(() => true);
+  const tint = new THREE.Color();
+
+  const lights: StatusLights = {
+    lamps,
+    rings,
+    update: (visuals, t, reduceMotion) => {
+      // 呼吸 0.5Hz（2 秒周期）；告警闪烁 1Hz（光敏安全上限，禁止更快）
+      const breath = reduceMotion ? 1 : 0.75 + 0.25 * (0.5 + 0.5 * Math.sin((t / 2) * Math.PI * 2));
+      const blink = reduceMotion ? 1 : 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
+      const slow = reduceMotion ? 0.8 : 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * Math.PI));
+
+      for (const visual of visuals) {
+        const state = visual.state;
+        const base = state ? STATE_META[state].color : 0x64748b;
+
+        let lampK = 1;
+        if (state === 'RUNNING') lampK = breath;
+        else if (state === 'ALARM') lampK = blink;
+        else if (state === 'MAINTENANCE') lampK = slow;
+        lamps.setColorAt(visual.lampIndex, tint.setHex(base).multiplyScalar(lampK));
+
+        // 光环：ALARM 跟随闪烁，其余按状态给固定亮度；STOPPED / 未连接不画
+        const ringK = state === 'ALARM' ? blink : 1;
+        const brightness = state ? RING_BRIGHTNESS[state] : 0;
+        rings.setColorAt(visual.ringIndex, tint.setHex(base).multiplyScalar(brightness * ringK));
+
+        const show = state !== null && state !== 'STOPPED';
+        if (ringShown[visual.ringIndex] !== show) {
+          ringShown[visual.ringIndex] = show;
+          const slot = ringSlots[visual.ringIndex];
+          dummy.position.set(slot.x, 0.03, slot.z);
+          dummy.rotation.set(0, 0, 0);
+          // 缩到 0 而不是 move 走：实例不能单独 visible，缩放是最省的逐实例开关
+          dummy.scale.setScalar(show ? 1 : 0);
+          dummy.updateMatrix();
+          rings.setMatrixAt(visual.ringIndex, dummy.matrix);
+          rings.instanceMatrix.needsUpdate = true;
+        }
+      }
+
+      // 28 次颜色写入 + 每个 buffer 各 168 字节上传，成本可忽略；不做脏检查是为了少一处状态不同步的坑
+      if (lamps.instanceColor) lamps.instanceColor.needsUpdate = true;
+      if (rings.instanceColor) rings.instanceColor.needsUpdate = true;
+    },
+    disconnect: (visuals) => {
+      for (const visual of visuals) {
+        visual.state = null;
+        setLabelActive(visual.label, false);
+        lamps.setColorAt(visual.lampIndex, tint.setHex(0x64748b));
+        rings.setColorAt(visual.ringIndex, tint.setHex(0x64748b).multiplyScalar(0));
+        if (ringShown[visual.ringIndex]) {
+          ringShown[visual.ringIndex] = false;
+          const slot = ringSlots[visual.ringIndex];
+          dummy.position.set(slot.x, 0.03, slot.z);
+          dummy.rotation.set(0, 0, 0);
+          dummy.scale.setScalar(0);
+          dummy.updateMatrix();
+          rings.setMatrixAt(visual.ringIndex, dummy.matrix);
+          rings.instanceMatrix.needsUpdate = true;
+        }
+      }
+      if (lamps.instanceColor) lamps.instanceColor.needsUpdate = true;
+      if (rings.instanceColor) rings.instanceColor.needsUpdate = true;
+    },
+  };
 
   const dispose = () => {
     for (const geo of geometries) geo.dispose();
@@ -323,7 +452,7 @@ export function buildFactory(): FactoryBuild {
     disposeMaterials(materials);
   };
 
-  return { root, devices, materials, rollers, arms, dispose };
+  return { root, devices, materials, lights, rollers, arms, dispose };
 }
 
 /** 坐标表里没有的设备：堆到动力站旁并在控制台报警，不静默跳过（3.3）。 */
@@ -335,23 +464,17 @@ export function placeOrphanDevice(deviceId: string): THREE.Group {
   return group;
 }
 
-/** 状态切换只换材质引用，不新建材质（G-17）。 */
-export function applyDeviceState(visual: DeviceVisual, state: EffectiveState, materials: SceneMaterials): void {
+/** 状态切换只改内部状态与标签；灯/环的颜色由 StatusLights.update 每帧统一写。 */
+export function applyDeviceState(visual: DeviceVisual, state: EffectiveState): void {
   if (visual.state === state) return;
   visual.state = state;
-  const pair = materials.states[state];
-  visual.lamp.material = pair.lamp;
-  visual.ring.material = pair.ring;
-  visual.ring.visible = state !== 'STOPPED';
   setLabelActive(visual.label, state === 'ALARM');
 }
 
-/** WS 断开：状态灯转灰、光环隐藏，不再按最后一帧闪烁（8.2）。 */
-export function applyDisconnected(visuals: Iterable<DeviceVisual>, materials: SceneMaterials): void {
+/** WS 断开：状态灯转灰、光环隐藏，不再按最后一帧闪烁（8.2）。颜色由 lights.disconnect 写。 */
+export function applyDisconnected(visuals: Iterable<DeviceVisual>): void {
   for (const visual of visuals) {
     visual.state = null;
-    visual.lamp.material = materials.disconnected;
-    visual.ring.visible = false;
     setLabelActive(visual.label, false);
   }
 }

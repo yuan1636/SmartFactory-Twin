@@ -5,7 +5,7 @@
  */
 
 import * as THREE from 'three';
-import { STATE_META, type EffectiveState } from '../utils/status';
+import type { EffectiveState } from '../utils/status';
 import { FACTORY } from './layout';
 
 /**
@@ -110,13 +110,27 @@ function makeWallTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-export interface StateMaterialPair {
-  lamp: THREE.MeshBasicMaterial;
-  ring: THREE.MeshBasicMaterial;
-}
+/**
+ * 光环的基础亮度。原实现是 per-state 的材质 `opacity`（ALARM 0.25 / RUNNING 0.18 / 其它 0.12~0.15）。
+ * D2 把 14 个光环合并成 1 个 InstancedMesh 后，材质只有一个 opacity，改不动逐台差异，
+ * 于是把「透明度差异」折成「颜色亮度系数」——背景是深色地面，两者在视觉上等价。
+ * 这是近似，不是等价变换：若光环叠在浅色物体上，观感会比原来略实。当前场景无此情况。
+ */
+export const RING_BRIGHTNESS: Record<EffectiveState, number> = {
+  RUNNING: 0.18,
+  IDLE: 0.12,
+  STOPPED: 0.15,
+  ALARM: 0.25,
+  MAINTENANCE: 0.15,
+};
 
 export interface SceneMaterials {
-  states: Record<EffectiveState, StateMaterialPair>;
+  /**
+   * 状态灯 / 光环合并渲染用的基材质（D2 合批：14 + 14 个 mesh → 2 个 InstancedMesh）。
+   * 基色白色，实际颜色由 `instanceColor` 逐实例写入，见 builders.ts 的 `StatusLights`。
+   */
+  lampBase: THREE.MeshBasicMaterial;
+  ringBase: THREE.MeshBasicMaterial;
   /** WS 断开时统一转灰，光环隐藏（规格 8.2） */
   disconnected: THREE.MeshBasicMaterial;
   body: Record<string, THREE.MeshStandardMaterial>;
@@ -141,25 +155,7 @@ const BODY_COLOR: Record<string, string> = {
   AUX: '#59636e',
 };
 
-const STATE_ORDER: EffectiveState[] = ['RUNNING', 'IDLE', 'STOPPED', 'ALARM', 'MAINTENANCE'];
-
 export function createMaterials(): SceneMaterials {
-  const states = {} as Record<EffectiveState, StateMaterialPair>;
-  for (const state of STATE_ORDER) {
-    const color = STATE_META[state].color;
-    states[state] = {
-      lamp: new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, toneMapped: false }),
-      ring: new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: state === 'ALARM' ? 0.25 : state === 'RUNNING' ? 0.18 : state === 'IDLE' ? 0.12 : 0.15,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    };
-  }
-
   const body: Record<string, THREE.MeshStandardMaterial> = {};
   for (const [type, hex] of Object.entries(BODY_COLOR)) {
     body[type] = new THREE.MeshStandardMaterial({
@@ -173,7 +169,17 @@ export function createMaterials(): SceneMaterials {
   const wallTexture = makeWallTexture();
 
   return {
-    states,
+    // 合并后的灯与环：基色白，靠 instanceColor 染色。transparent 是为了让 ALARM 的
+    // 呼吸/闪烁能通过颜色亮度表现出来（不透明的自发光球看不出"在闪"）。
+    lampBase: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, toneMapped: false }),
+    ringBase: new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 1,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    }),
     disconnected: new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 1, toneMapped: false }),
     body,
     outline: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
@@ -207,11 +213,9 @@ export function createMaterials(): SceneMaterials {
  */
 export function disposeMaterials(materials: SceneMaterials | null): void {
   if (!materials) return;
-  for (const pair of Object.values(materials.states)) {
-    pair.lamp.dispose();
-    pair.ring.dispose();
-  }
   materials.disconnected.dispose();
+  materials.lampBase.dispose();
+  materials.ringBase.dispose();
   for (const m of Object.values(materials.body)) m.dispose();
   materials.outline.dispose();
   materials.floor.map?.dispose(); // 程序化贴图是运行时创建的，不 dispose 会在反复挂载时累积显存

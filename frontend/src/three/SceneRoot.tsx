@@ -76,6 +76,8 @@ declare global {
         postPasses: number;
         sceneTriangles: number;
       };
+      /** 按名称前缀分组统计可见绘制体，用来回答"这 120 次画在什么上面"（D2 合批的依据与证据） */
+      breakdown: () => Array<{ kind: string; meshes: number; triangles: number }>;
     };
   }
 }
@@ -210,16 +212,17 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     };
     refreshHighlight();
 
-    /** 状态材质引用切换 + 已断开转灰 */
+    /** 状态写入 visual + 已断开转灰；灯/环的实际颜色由主循环里的 lights.update 统一刷 */
     const applyStore = () => {
       const state = readStore();
       if (state.wsStatus === 'connected') {
         for (const device of state.devices) {
           const visual = build.devices.get(device.device_id);
-          if (visual) applyDeviceState(visual, device.state, build.materials);
+          if (visual) applyDeviceState(visual, device.state);
         }
       } else if (state.wsStatus === 'reconnecting' || state.wsStatus === 'disconnected') {
-        applyDisconnected(build.devices.values(), build.materials);
+        applyDisconnected(build.devices.values());
+        build.lights.disconnect(build.devices.values());
       }
     };
     applyStore();
@@ -344,16 +347,13 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     let fps = 0;
     let fpsAt = performance.now();
 
+    /**
+     * 呼吸/闪烁原本改的是「每种状态共享材质的 opacity」，现在灯与环各只有 1 个 InstancedMesh，
+     * 材质是共享的，只能改成逐实例写颜色（见 builders.ts 的 StatusLights）。
+     * reduceMotion 时不返回：仍要刷一次静态色，否则第一次渲染会是白球。
+     */
     const animateMaterial = (t: number) => {
-      if (reduceMotion) return;
-      // 呼吸 0.5Hz（2 秒周期）；告警闪烁 1Hz（光敏安全上限，禁止更快）
-      const breath = 0.75 + 0.25 * (0.5 + 0.5 * Math.sin((t / 2) * Math.PI * 2));
-      const blink = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
-      const slow = 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * Math.PI));
-      build.materials.states.RUNNING.lamp.opacity = breath;
-      build.materials.states.ALARM.lamp.opacity = blink;
-      build.materials.states.ALARM.ring.opacity = 0.25 * blink;
-      build.materials.states.MAINTENANCE.lamp.opacity = slow;
+      build.lights.update(build.devices.values(), t, reduceMotion);
     };
 
     const setBadge = (fpsValue: number | null) => {
@@ -443,6 +443,52 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // 主循环启动前先跑一次，保证角标与验收脚本第一次读到的不是 0
     profile();
 
+    /**
+     * 按名称前缀分组统计「会被画出来的物体」。
+     *
+     * 为什么需要它：`profile()` 只说总数（120），说不出花在哪。D2 要合批，
+     * 就必须先知道是 14 套状态灯占 14 次、还是 4 条色带逐段各占一次。
+     * 分组键取 `name` 里冒号前的前缀（`device:CNC-01` → `device`），
+     * 没名字的用构造类型兜底，这样新增道具忘了命名也能被看见。
+     *
+     * 统计口径与 draw call 不是一一对应（一个 InstancedMesh 画 N 个实例仍是 1 次），
+     * 所以每个 Mesh 只算 1 次，与 three 的行为一致。
+     */
+    const breakdown = () => {
+      const groups = new Map<string, { meshes: number; triangles: number }>();
+      const visibleInTree = (obj: THREE.Object3D): boolean => {
+        let node: THREE.Object3D | null = obj;
+        while (node) {
+          if (!node.visible) return false;
+          node = node.parent;
+        }
+        return true;
+      };
+
+      scene.traverse((obj) => {
+        const asMesh = obj as THREE.Mesh;
+        const isDrawable = (asMesh as unknown as { isMesh?: boolean }).isMesh === true
+          || (obj as THREE.LineSegments).isLineSegments === true;
+        if (!isDrawable || !visibleInTree(obj)) return;
+
+        const raw = obj.name || obj.type;
+        const kind = raw.includes(':') ? raw.slice(0, raw.indexOf(':')) : raw;
+        const geo = asMesh.geometry;
+        const tris = geo?.index
+          ? geo.index.count / 3
+          : (geo?.attributes?.position?.count ?? 0) / 3;
+        // InstancedMesh 一次画 N 个实例，仍只占 1 次 draw call
+        const entry = groups.get(kind) ?? { meshes: 0, triangles: 0 };
+        entry.meshes += 1;
+        entry.triangles += tris;
+        groups.set(kind, entry);
+      });
+
+      return [...groups.entries()]
+        .map(([kind, v]) => ({ kind, meshes: v.meshes, triangles: Math.round(v.triangles) }))
+        .sort((a, b) => b.meshes - a.meshes);
+    };
+
     apiRef.current = {
       setPreset: (key) => moveTo(CAMERA_PRESETS[key]),
       focusDevice: (deviceId) => {
@@ -466,6 +512,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         postfx: () => postfx.describe(),
         /** 原子读四项开销：整链 / 场景 / 阴影 / 后处理（加不回总数就说明统计有漏） */
         profile: () => profile(),
+        /** 按名称前缀分组，回答"这些 draw call 花在什么上面"（D2 合批的依据） */
+        breakdown: () => breakdown(),
         /** 场景自身 draw call，可选是否含阴影（D2 的 ≤100 按「不含阴影」判） */
         measureSceneCalls: (withShadows?: boolean) => measureSceneCalls(withShadows ?? false),
         deviceStates: () => {
