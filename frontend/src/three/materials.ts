@@ -136,6 +136,12 @@ export interface SceneMaterials {
   /** WS 断开时统一转灰，光环隐藏（规格 8.2） */
   disconnected: THREE.MeshBasicMaterial;
   body: Record<string, THREE.MeshStandardMaterial>;
+  /**
+   * 设备建模 v2（D 批 R2/R3）：所有部件按顶点色合并成一份几何，共用一个材质。
+   * 顶点色承担漆面 / 金属 / 玻璃 / 警示色，不再给每个部件单独建材质，
+   * 这样部件数增加时 draw call 不跟着涨（规格 §10.4 第 2 项）。
+   */
+  deviceShell: THREE.MeshStandardMaterial;
   outline: THREE.LineBasicMaterial;
   floor: THREE.MeshStandardMaterial;
   wall: THREE.MeshStandardMaterial;
@@ -184,6 +190,11 @@ export function createMaterials(): SceneMaterials {
     }),
     disconnected: new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 1, toneMapped: false }),
     body,
+    deviceShell: new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.58,
+      metalness: 0.34,
+    }),
     outline: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
     floor: new THREE.MeshStandardMaterial({
       map: floorTexture,
@@ -219,6 +230,7 @@ export function disposeMaterials(materials: SceneMaterials | null): void {
   materials.lampBase.dispose();
   materials.ringBase.dispose();
   for (const m of Object.values(materials.body)) m.dispose();
+  materials.deviceShell.dispose();
   materials.outline.dispose();
   materials.floor.map?.dispose(); // 程序化贴图是运行时创建的，不 dispose 会在反复挂载时累积显存
   materials.floor.dispose();

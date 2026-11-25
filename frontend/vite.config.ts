@@ -22,6 +22,10 @@ export default defineConfig({
       'three/examples/jsm/postprocessing/SMAAPass',
       'three/examples/jsm/renderers/CSS2DRenderer',
       'three/examples/jsm/utils/BufferGeometryUtils',
+      // 设备建模 v2（D 批 R2）：RoundedBoxGeometry 也是 examples 模块。
+      // 运行期才让 Vite 发现新依赖会触发重新预打包，删 deps_temp 被拦截时
+      // dev server 会直接退出、页面白屏（见提交 5a2d4c4 的教训）。
+      'three/examples/jsm/geometries/RoundedBoxGeometry',
     ],
   },
   server: {
