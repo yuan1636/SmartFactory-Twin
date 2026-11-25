@@ -847,6 +847,80 @@ ffmpeg -i output\d6\short.mp4 -i palette.png -lavfi "fps=15,scale=800:-1:flags=l
 
 ---
 
+## 10. D 批追加：设备建模 v2（R2 / R3）
+
+> 2026-11-25 晚，作者看过 R1 的人视机位后提出「设备建模太简陋，把细节做好」。
+> 本节把这句主观判断换成可数、可截图的判据；**不使用「更真实」一类无判据措辞**。
+> 交付节奏沿用 `docs/acceptance_phase4_d.md`：R2（CNC 样板）→ R3（推广其余 13 台），分两次提交，作者可在 R2 后叫停。
+
+### 10.1 目标与边界
+
+五类设备现在分别是 2~5 个 `BoxGeometry` / `CylinderGeometry` 的堆叠，人眼高度机位下认不出是什么机器。
+本批只做**设备本体的可辨识细节**，不改产线逻辑、不改状态机、不改后端、不引入 GLB 或任何外部美术资产
+（§7.3 第 10 条继续生效，`factory_models/` 保持空占位）。
+
+### 10.2 改哪些文件
+
+| 文件 | 改动 |
+|---|---|
+| `three/deviceDetail.ts`（新增） | 部件清单（纯数据，可单测）+ 顶点色几何生成；每类设备一张部件表 |
+| `three/deviceDetail.test.ts`（新增） | 部件数、包围盒、三角数、接触阴影、分组数的约束 |
+| `three/builders.ts`（改） | `buildDevice` 用合并细节几何替换盒子堆叠；**保留** `userData.deviceId` 拾取、`lampY`、轮廓盒、`rollers` / `arms` 动画接口 |
+| `three/materials.ts`（改） | 新增一个 `vertexColors` 的设备壳材质并纳入 `disposeMaterials` |
+| `vite.config.ts`（改） | `optimizeDeps.include` 增加 `RoundedBoxGeometry`，否则运行期重打包会崩 dev server（见 §10.6 风险①） |
+| `scripts/acceptance-device.mjs`（新增） | 页面级断言：mesh 数、draw call、点击命中、截图非黑屏 |
+
+### 10.3 视觉判据（同机位前后对比）
+
+1. **同机位可复现**：`DEVICE`（CNC-01 特写）、`WALK`（人眼沿产线）、`overview` 三个机位，改前改后各一张。
+2. **能认出类型**：五类设备外观互不相同——CNC 有滑动门 + 观察窗 + 倾斜操作面板；ROBOT 有分节关节与夹爪；
+   CONVEYOR 有侧板、支腿、端头驱动罩；INSPECTION 有龙门架与相机头；AUX 有风机罩 / 泵体与法兰。
+3. **能数出部件**：每台设备至少能指出 5 处结构件（不是靠贴图），见 §10.4 第 1 项。
+4. **贴地**：每台有一片假接触阴影，机身不悬空；细节不越出 `DEVICE_SIZES` 包围盒（描边盒与 D3 相机避障都用它）。
+
+### 10.4 硬指标
+
+| # | 指标 | 目标值 | 测量工具 / 方法 | 判定 |
+|---|---|---|---|---|
+| 1 | 可辨识部件数 | CNC **≥12**，其余四类各 **≥8** | `deviceDetail.ts` 的 `DEVICE_PARTS` 清单，单测计数 | 按类型逐项 |
+| 2 | 每台 mesh 数 | **≤3**（含动画必需的滚筒 / 定位条 / 枢轴） | 遍历 `buildFactory().devices` 的 group 子 mesh | 14 台全部 |
+| 3 | 单台三角数 | **≤8,000** | `geometry.index.count / 3` | 14 台全部 |
+| 4 | 全场场景 draw call | **≤100** | `__sceneDebug.profile()` 的 `sceneCalls` | 3 次采样均达标 |
+| 5 | 帧率降幅 | **≤10%** | 5 秒 rAF 中位数，与 R1.5 基线比 | 总览机位 |
+| 6 | 14 台点击命中 | **14 / 14** | 复用 `acceptance-d3.mjs` 的投影坐标逐台点击 | 侧栏标题等于设备名 |
+| 7 | 动画接口 | 滚筒自转、机械臂摆动、闸门排队不停 | `acceptance-motion.mjs` 17 项 + `acceptance-env.mjs` 23 项 | 全过 |
+| 8 | 假接触阴影 | 每台 **1** 片 | 部件清单里 `contactShadow` 计数 | 14 / 14 |
+
+### 10.5 验证方法
+
+```text
+cd frontend && npx tsc --noEmit
+cd frontend && npm run test -- --run          # 含新增 deviceDetail.test.ts
+node scripts/acceptance-device.mjs             # 本批断言
+node scripts/acceptance-d3.mjs                 # 14/14 点击，防合并破坏拾取
+node scripts/acceptance-motion.mjs             # 17 项，防动画接口丢失
+node scripts/acceptance-env.mjs                # 23 项，防四工况回归
+```
+
+截图走 `scripts/audit-shot.mjs` 的同机位脚本；**性能数字必须窗口化 Chrome**（无头是 SwiftShader，不作数）。
+改前的对照图取 `output/d_batch/a_*.png` 与 `r2_DEVICE.png`。
+
+### 10.6 风险
+
+1. **RoundedBoxGeometry 是 `three/examples/jsm` 新模块**。Vite 运行期发现新依赖会重新预打包，
+   删 `.vite/deps_temp_*` 被环境拦截时 dev server 直接退出、页面白屏（D 批之前踩过，提交 `5a2d4c4`）。
+   必须**同时**把它写进 `optimizeDeps.include`；清缓存只允许 `rm -rf node_modules/.vite`。
+2. **顶点色合并后所有部件共用一个材质**：状态色只能改灯 / 环（现状本就如此），不许在本批给机身加"随状态染色"。
+3. **细节越界**：`DEVICE_SIZES` 同时供描边盒与 D3 相机避障使用，部件超出包围盒会让镜头穿模判定失准。
+4. **阴影 pass 同步变重**：合并后的大网格仍会进阴影 pass，需实测 shadow draw call 不涨破预算。
+5. **性能优先**：若加满细节后帧率降幅 >10%，先砍 RoundedBox 的分段数与格栅条数，**不砍部件类别数**（判据是能认出来）。
+
+### 10.7 工时
+
+1.5 人日（R2 样板 0.5 + R3 推广 0.5 + 验收与截图 0.5）。
+
+---
+
 ## 附录 A 现状体检命令（D0 直接照跑）
 
 ### A.1 读码核验（本节所有代码事实的来源）
