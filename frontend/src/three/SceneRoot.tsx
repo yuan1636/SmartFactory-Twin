@@ -115,6 +115,8 @@ declare global {
       breakdown: () => Array<{ kind: string; meshes: number; triangles: number }>;
       /** 已建立的工业道具类别 */
       propKinds: () => string[];
+      /** 设备建模 v2（D 批 R2/R3）：逐台的部件类别数 / mesh 数 / 三角数，验收读它断言 §10.4 */
+      deviceDetail: () => Array<{ id: string; key: string; parts: number; triangles: number; meshes: number }>;
     };
   }
 }
@@ -811,6 +813,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         breakdown: () => breakdown(),
         /** 已建立的工业道具类别（D2 断言"≥7 类"） */
         propKinds: () => build.propKinds,
+        /** 设备建模 v2 的逐台统计：部件数 / mesh 数 / 三角数 */
+        deviceDetail: () => build.deviceDetails.map((d) => ({ ...d })),
         /** 场景自身 draw call，可选是否含阴影（D2 的 ≤100 按「不含阴影」判） */
         measureSceneCalls: (withShadows?: boolean) => measureSceneCalls(withShadows ?? false),
         deviceStates: () => {

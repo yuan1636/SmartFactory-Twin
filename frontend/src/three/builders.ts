@@ -24,6 +24,7 @@ import {
 } from './layout';
 import { createMaterials, disposeMaterials, RING_BRIGHTNESS, type SceneMaterials } from './materials';
 import { buildProps } from './propBuilder';
+import { buildDeviceDetail, partKeyOf, type DevicePartKey } from './deviceDetail';
 
 export interface DeviceVisual {
   group: THREE.Group;
@@ -86,6 +87,8 @@ export interface FactoryBuild {
   rollers: Map<string, RollerRig>;
   /** 机器人摆动枢轴（按 device_id） */
   arms: Map<string, THREE.Group>;
+  /** 设备建模 v2 的逐台几何统计（规格 §10.4：部件数 / mesh 数 / 三角数），验收脚本读它 */
+  deviceDetails: Array<{ id: string; key: DevicePartKey; parts: number; triangles: number; meshes: number }>;
   dispose: () => void;
 }
 
@@ -107,6 +110,7 @@ export function buildFactory(): FactoryBuild {
   const devices = new Map<string, DeviceVisual>();
   const rollers = new Map<string, RollerRig>();
   const arms = new Map<string, THREE.Group>();
+  const deviceDetails: FactoryBuild['deviceDetails'] = [];
 
   const track = <T extends THREE.BufferGeometry>(geo: T): T => {
     geometries.push(geo);
@@ -211,6 +215,29 @@ export function buildFactory(): FactoryBuild {
       parent.add(mesh);
       return mesh;
     };
+
+    // ---------- 设备建模 v2（D 批 R2）：先把已启用部件表的类型换成合并几何 ----------
+    // 十几个部件按顶点色并成一份几何，只占 1 个 mesh（旧版是 3~5 个 Box 各占 1 次）。
+    // 机身不随状态染色（applyDeviceState 只改灯/环与标签），所以合并材质不破坏工况表达；
+    // userData.deviceId 仍挂在 mesh 上，D3 的 14/14 点击拾取不受影响。
+    const detailKey = partKeyOf(deviceId);
+    if (detailKey) {
+      const detail = buildDeviceDetail(detailKey);
+      const shell = new THREE.Mesh(track(detail.staticGeometry), materials.deviceShell);
+      shell.name = `device-shell:${deviceId}`;
+      shell.castShadow = true;
+      shell.receiveShadow = true;
+      shell.userData.deviceId = deviceId;
+      group.add(shell);
+      deviceDetails.push({
+        id: deviceId,
+        key: detailKey,
+        parts: detail.partKinds.length,
+        triangles: detail.triangleCount,
+        meshes: detail.meshCount,
+      });
+      return { group, lampY: 2.9 };
+    }
 
     let lampY: number;
 
@@ -462,6 +489,7 @@ export function buildFactory(): FactoryBuild {
     setCutaway: env.setCutaway,
     rollers,
     arms,
+    deviceDetails,
     dispose,
   };
 }
