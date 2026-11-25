@@ -272,7 +272,7 @@ export const LINE_STRIPS = [
 | `AUX` / `PUMP-*` | 卧式圆柱（沿 X 轴，r 0.7）+ 底座盒 | 1.6 × 1.4 × 1.4 | `#59636E` |
 
 - 所有 mesh 的 `castShadow = true`，地面 `receiveShadow = true`。
-- 单台设备的 mesh 数量控制在 3～5 个；全场上限 90 个 draw call。
+- 单台设备的 mesh 数量控制在 3～5 个；全场上限 ~~90~~ **≤100 个 draw call**（2026-11-25 按 `docs/spec_phase4.md` v4.0 §2.4 统一，原 90 与本文 §10 的 150 互相矛盾，一并作废；实测现状 108）。
 - 每台设备外层包一个 `THREE.Group`，命名 `device:<device_id>`，并挂 `userData.deviceId`，用于射线拾取（第 6.4 节）。
 
 ### 3.5 相机预设（G-07）
@@ -669,7 +669,7 @@ export const telemetryStore = {
 | 首屏可交互（dev，本机） | < 2.5s | 浏览器 Performance 面板，`DOMContentLoaded` 到首帧三维渲染 |
 | 三维帧率（14 台设备，默认视角） | ≥ 50 fps | 页面右上角 FPS 角标（dev 环境显示） |
 | WS 每秒更新耗时 | < 8ms | `performance.now()` 包裹 `updateDeviceState()` |
-| 全场 draw call | ≤ 150 | `renderer.info.render.calls` 打印到控制台（dev） |
+| 全场 draw call | **≤ 100** | `renderer.info.render.calls` 打印到控制台（dev）。2026-11-25 按 `docs/spec_phase4.md` v4.0 §2.4 统一：本条原为 ≤150，与 §3.4 的 90 矛盾，两处一并作废；D0 实测现状 108 |
 | 图表切换范围重绘 | < 300ms | 人工观察 |
 | 打包体积（gzip） | < 1.2 MB | `vite build` 输出 |
 

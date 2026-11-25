@@ -168,13 +168,18 @@ draw call 上限从 phase3 的"90 / ≤150"两处矛盾值统一为 **≤100**�
 
 | 指标 | 现值 | 来源 | 说明 |
 |---|---|---|---|
-| draw call | **132** | `acceptance_phase3.md:383` | 角标 `renderer.info.render.calls` |
-| 三角形 | **11,066** | 同上 | 几何量很小，瓶颈在 draw call 不在面数 |
-| 帧率 | **144 fps** | 同上 | 有 GPU 的桌面 Chrome；**无头 SwiftShader 的 1~5 fps 不作数** |
-| 首屏可交互 | **未测** | — | D0 补测，别拿"感觉很快"当结果 |
+| draw call | **108** | D0 实测（三次 108/108/108） | 角标 `renderer.info.render.calls` |
+| 三角形 | **9,146** | 同上 | 几何量很小，瓶颈在 draw call 不在面数 |
+| 帧率 | **144.9 fps**（5s rAF 中位） | 同上 | RTX 4060 Laptop + 144Hz 屏；**无头 SwiftShader 的 1~5 fps 不作数** |
+| 首屏可交互 | **562 ms** | 同上（导航开始 → canvas 首帧） | DOM 就绪 182 ms |
 | 后处理开销 | **未测** | — | D1 测增量 |
+| 各机位 draw call | 总览 108 / WS-A 75 / WS-B 73 / 设备特写 25 / 产线近景 30 / 人眼 37 | `output/d0/poses.json` | 总览最重 |
 
-> **132 > 100，这是本阶段第一件要解决的事**。D2 加道具只会更多，所以合批不是优化项，是必做项（§3 D2 硬指标）。
+> **108 > 100，超 8 个**。D2 加 7 类道具只会更多，所以合批不是优化项，是必做项（§3 D2 硬指标）。
+>
+> **修正记录**：v4.0 初稿此处写的是"132 / 11,066"，转引自 `acceptance_phase3.md:383`（第 3 阶段 Batch 2 的快照）。
+> D0 实测为 **108 / 9,146**，说明那组数字在当前代码上已不成立——可能是后续批次减少了 mesh 或改了实例化方式。
+> 以 D0 实测为准，D-37 已同步改写。/ 详见 `docs/audit_d0.md` §4。
 
 ### 2.4 draw call 上限的口径统一
 
@@ -184,10 +189,11 @@ draw call 上限从 phase3 的"90 / ≤150"两处矛盾值统一为 **≤100**�
 |---|---|---|
 | `spec_phase3.md:275` | "全场上限 90 个 draw call" | 改为 **≤100**，注明"以 v4.0 §2.3 实测口径为准" |
 | `spec_phase3.md:672` | "全场 draw call ≤150" | 同上 |
-| 本文件 | **≤100** | 现状 132 记为偏差 **D-37** |
+| 本文件 | **≤100** | 现状 108 记为偏差 **D-37** |
 
-为什么是 100 而不是 150：132 是**没有后处理、没有道具**的现状。D1 加 1~2 个 pass、D2 加 7 类道具、D4 加粒子，
-若不设更严的上限，D6 必然超标后再回头砍，那时改动成本是现在的三倍。100 是"逼着做合批"的值，不是拍的。
+为什么是 100 而不是 150：108 是**没有后处理、没有道具**的现状。D1 加 1~2 个 pass、D2 加 7 类道具、D4 加粒子，
+若不设更严的上限，D6 必然超标后再回头砍，那时改动成本是现在的三倍。100 是"逼着做合批"的值，不是拍的——
+按 D0 实测只差 8 个，说明合批（静态道具合并 + 重复件 `InstancedMesh`）做得到。
 
 ### 2.5 后处理零新增依赖的路径
 
@@ -228,8 +234,8 @@ D3 / D4 可在 D2 之后并行；D5 只动 DOM 层，任何时候插入都不冲
 | 项 | 内容 |
 |---|---|
 | **目标** | 把"哪里假、哪里空、哪里卡"变成可核对的清单，作为 D1~D6 的输入；同时采到 3 个基线数（fps / draw call / 首屏可交互） |
-| **改哪些文件** | 无代码改动。新增 `docs/audit_d0.md`（问题清单）、`output/d0/*.png`（6 张固定机位截图）、`output/d0/d0_30s.mp4`（30 秒录屏）、`scripts/audit-shot.mjs`（按机位批量截图） |
-| **视觉判据** | 6 张截图覆盖：总览全景、WS-A、WS-B、单设备特写（CNC-01）、产线近景（含闸门）、告警态（设备红边 + Toast）。每张必须能看出"这是哪一类场景"，看不出的位置就是问题 |
+| **改哪些文件** | 原则上是**零代码改动**，只产出 `docs/audit_d0.md`、`output/d0/*.png`（6 张）、`output/d0/d0_30s.webm`、`output/d0/baseline.json`，以及三个采集脚本 `scripts/audit-shot.mjs` / `audit-baseline.mjs` / `audit-record.mjs`。<br>**已发生的唯一代码改动**：`SceneRoot.tsx` 的 `__sceneDebug` 增加 dev-only `setCamera(pose)`（6 行，仅 DEV 分支），否则机位无法写死、6 张图不可复现（D-42） |
+| **视觉判据** | 6 张截图覆盖：总览全景、WS-A、WS-B、单设备特写（CNC-01）、产线近景（含闸门）、**人眼高度地面视角**。每张必须能看出"这是哪一类场景"，看不出的位置就是问题 |
 | **硬指标** | ① 截图 **6 张**，机位写死在脚本里（不许手动调，否则下次无法对比）；② 录屏 **1 条 30 秒**；③ 问题清单**每条四要素齐全**：截图文件名 + 画面位置（九宫格描述）+ 现象一句话 + 归属批次（D1/D2/D4/D5）；④ 基线数字 3 个，缺一不可 |
 | **验证方法** | 附录 A 的 A.1~A.4；`renderer.info.render.calls` 与角标 fps 从 `__sceneDebug.getStats()` 读，不靠肉眼 |
 | **风险** | ① 无头 Chrome 是 SwiftShader 软渲染（1~5 fps），**帧率数字完全不作数**，必须用带 GPU 的窗口化 Chrome 且确认角标 fps > 30 才采信；② 截图机位若手动调，D1 的前后对比就失去意义 |
@@ -375,18 +381,27 @@ curl -s -o NUL -w "frontend %{http_code}`n" http://127.0.0.1:5173/overview
 ### 5.1 D0 现状体检
 
 ```powershell
-node scripts/audit-shot.mjs                      # 按 6 个固定机位批量截图 → output/d0/
-node scripts/audit-baseline.mjs                  # 读 __sceneDebug.getStats()，打印基线
+node scripts/audit-baseline.mjs                  # → output/d0/baseline.json（draw call / 三角形 / fps / 首屏）
+node scripts/audit-shot.mjs                      # → output/d0/01..06.png + poses.json
+node scripts/audit-record.mjs 30                 # → output/d0/d0_30s.webm（录完自检非黑屏）
 ```
 
-预期：
+**已实测（2026-11-25）：**
 
 ```text
-output/d0/01_overview.png … 06_alarm.png   共 6 张
-基线: draw calls = 132   triangles = 11066   fps(5s 中位) ≈ 144   首屏可交互 = 未测→本次得到 N ms
+渲染器      : ANGLE (NVIDIA RTX 4060 Laptop GPU, D3D11)
+首屏可交互  : 562 ms（DOM 就绪 182 ms）
+fps         : 中位 144.9（间隔中位 6.9 ms，p95 7.1 ms，722 帧 / 5s）
+draw call   : 108 / 108 / 108
+三角形      : 9,146
+6 张截图    : 01_overview 108 calls · 02_ws_a 75 · 03_ws_b 73 · 04_device 25 · 05_line 30 · 06_eye_level 37
+录屏        : 5.71 MB webm，1s 处平均亮度 29.5（非黑屏）
 ```
 
-判定：6 张齐全；`draw calls` 落在 **125~140** 区间（与 §2.3 的 132 对得上）；问题清单在 `docs/audit_d0.md`，**每条都有截图名 + 九宫格位置**。
+判定：6 张齐全且 `poses.json` 落盘；总览 draw call 与 §2.3 的 108 一致；`docs/audit_d0.md` 的问题清单**每条都有截图名 + 九宫格位置 + 归属批次**（本次 20 条）。
+
+> `audit-record.mjs` 会在录完把 webm 解码回来算平均亮度，<3 即判定黑屏并退出码 2。
+> 这一步是必要的：WebGL canvas 的 `captureStream` 在个别配置下会录出全黑，不验证就会存下一个 5 MB 的黑文件。
 
 ### 5.2 D1 视觉基调
 
@@ -766,6 +781,9 @@ ffmpeg -i output\d6\short.mp4 -i palette.png -lavfi "fps=15,scale=800:-1:flags=l
 | 2 | **"弱机"用 CPU 4× 降速模拟可以吗**？还是必须找一台低配机器实测？ | 用 CPU 4× 降速。理由：可复现、可脚本化；真机换一台就变一个数，无法进验收 | 若不接受，§4 第 3 项需改成人工项 |
 | 3 | **README 放 GIF 还是静态图**？GIF 限 ≤5 MB / 800 px。 | 放 GIF（6~8 秒环绕）。静态图看不出"在动"，而"在动"是本阶段核心卖点 | D6 的物料清单与 README 首屏 |
 
+**2026-11-25 作者确认：三条均按建议执行。** 即 5 个预设为 `overview` / `WS-A` / `WS-B` / `LINE-A1` / `DEVICE`；
+弱机以 CPU 4× 降速模拟；README 放 GIF（≤5 MB / 800 px）。本节至此无待确认项，后续变更需新增条目而非改写结论。
+
 ---
 
 ## 附录 A 现状体检命令（D0 直接照跑）
@@ -819,11 +837,14 @@ node scripts/audit-shot.mjs            # → output/d0/01_overview.png … 06_al
 
 | 编号 | 偏差内容 | 发现批次 | 处置 |
 |---|---|---|---|
-| **D-37** | 全场 draw call 现状 **132**，超出本版上限 100，且尚未加道具与后处理 | D0 | 待处理：D2 合批（静态道具合并 + 重复件 `InstancedMesh`）压到 ≤100 |
+| **D-37** | 全场 draw call 现状 **108**（初稿按 phase3 快照写 132，D0 实测纠正），超出本版上限 100 **8 个**，且尚未加道具与后处理 | D0 | 待处理：D2 合批（静态道具合并 + 重复件 `InstancedMesh`）压到 ≤100 |
 | **D-38** | `LINE-B1` / `LINE-B2` 无 CONV 设备，带速没有数据源 | D0 | 已定 fallback 规则（§7.2），按"该线是否全 RUNNING"取 2.4 或 0，并注释为表演层近似 |
 | **D-39** | 相机预设现状 3 个，本版要求 5 个 | D0 | 待处理：D3 新增 `LINE-A1` / `DEVICE` 两个机位 |
 | **D-40** | 渲染器未设 `toneMapping`、场景无 `fog`，v2.0 文档未记录此项 | D0 | 待处理：D1 按 §6.1 / §6.2 补上，并在接线后重测帧率 |
 | **D-41** | `spec_phase3.md` 的 draw call 上限两处矛盾（:275 写 90、:672 写 ≤150） | D0 | 已统一为 ≤100 并回写 phase3（§2.4） |
+| **D-42** | `__sceneDebug` 只有只读 `camera()`，无设置机位入口，脚本无法复现 6 个固定机位 | D0 | 已加 dev-only `setCamera(pose)`（6 行）。**仅 DEV 分支**，不影响生产构建；这是 D0 唯一的代码改动 |
+| **D-43** | D0 第 6 张机位原定"告警态"，但库中未解除告警 0 条，且注入数据会污染演示库 | D0 | 改为**人眼高度地面视角**（更能暴露"空"与穿模）；告警可视化验收挪到 D5 / D6 |
+| **D-44** | `__sceneDebug` 仅 DEV 可用，而 §5 要求"截图必须生产构建"——两者不能同时满足 | D0 | 分工：**性能数字与机位截图走 dev**（需要 `__sceneDebug`），**对外封面与作品集截图走 prod**（需要无角标）。D5 的 `cover.png` 用 prod，D6 的性能数字用 dev |
 
 ---
 
