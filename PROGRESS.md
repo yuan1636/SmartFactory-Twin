@@ -1,6 +1,6 @@
 # PROGRESS.md — 交接与进度
 
-> 更新：2026-11-25 16:45 · 对应提交 `7d124f0`（D2 收尾）· 维护人：本仓库施工方
+> 更新：2026-11-25 17:30 · 对应提交 `0f59bfe`（D3 收尾）· 维护人：本仓库施工方
 > **用途**：换窗口 / 换人接手时，先读这一页再看规格。它只回答三件事——做过什么、验证到什么程度、下一步做什么。
 > 细节一律不在这里重复，末尾给出每条结论的原文位置。
 
@@ -8,10 +8,10 @@
 
 ## 0. 一句话现状
 
-第 4 阶段（展示改造）已完成 **D0 体检 / D1 视觉基调 / D2 工业道具**，
-三维总览从「能跑不卡的几何体堆叠」变成「有围护、有雾、有七类工业道具的车间」，
-场景 draw call 从 120 降到 **77**（上限 100），帧率未降（144.9 fps），
-**下一批是 D3 镜头与交互**。
+第 4 阶段（展示改造）已完成 **D0 体检 / D1 视觉基调 / D2 工业道具 / D3 镜头与交互**，
+三维总览现在「进得去（3 s 入场环绕）、看得懂（5 个预设 + 设备详情卡）、点得动（14/14）、演得住（巡游 6 s/站）」，
+场景 draw call 干净加载 **77**（与 D2 持平，上限 100），帧率 144.9 未降，
+**下一批是 D4 动效生命感**。
 
 ---
 
@@ -31,8 +31,9 @@
 | **D0** | 现状体检（20 条「假/空/卡」清单 + 基线） | 已完成 | `docs/audit_d0.md` |
 | **D1** | 视觉基调（后处理 / 材质 / 雾） | 已完成，9/9 | `docs/acceptance_phase4.md` §10 |
 | **D2** | 工业道具（七类 + 合批） | 已完成，19/19 | 同上 §11 |
-| D3 | 镜头与交互 | **未开始（下一步）** | `docs/spec_phase4.md` §3 |
-| D4 / D5 / D6 | 动效 / 界面层 / 性能与演示物料 | 未开始 | 同上 §3 |
+| **D3** | 镜头与交互（5 预设 + 入场 + 点击详情 + 巡游） | 已完成，11/11 | 同上 §12 |
+| D4 | 动效生命感 | **未开始（下一步）** | `docs/spec_phase4.md` §3 |
+| D5 / D6 | 界面层 / 性能与演示物料 | 未开始 | 同上 §3 |
 
 ### 1.2 第 4 阶段 A（数据与 AI）—— 已冻结，不再动
 
@@ -46,7 +47,7 @@
 > 这批的三条实测结论推翻了规格原判断（`pg_total_relation_size` 只量父表、压缩**会**压小索引、压缩块**可写**），
 > 见偏差 D-27 / D-28 / D-30。别按旧文档的直觉再写一遍。
 
-### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 已交付
+### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 / D3 已交付
 
 **D0 体检**（只产清单与基线，唯一代码改动是 dev-only `setCamera`，D-42）
 产出 `docs/audit_d0.md` 的 20 条问题清单（每条：截图文件 + 九宫格位置 + 现象 + 归属批次），
@@ -75,6 +76,18 @@
 合批的代价（已写在代码注释里，别当成 bug 再「修」回去）：状态色改逐实例写、呼吸/闪烁折成颜色亮度、
 STOPPED 用实例 `scale` 缩 0、`frustumCulled=false`、道具不可单独拾取。
 
+**D3 镜头与交互**（`cameraPresets.ts` / `SceneRoot.tsx` / `Overview.tsx` / `global.css` / 新增 `cameraPresets.test.ts`）
+
+| 项 | 落地值 |
+|---|---|
+| 预设 | 3 → **5**：`overview / WS-A / WS-B / LINE-A1 / DEVICE`；`PRESET_ORDER` 是键位 1~5 与巡游序列的唯一顺序源；DEVICE 跟随选中设备，无选中落 CNC-01 特写 |
+| 入场 | 球面插值绕场（方位角 -72°→0°、半径 62→48、高 60→40），冷启动实测 **3003.7 ms**（判定带 2800~3200） |
+| 切换 | 二次贝塞尔 + 中点抬高（≤10 m，防擦机身）；20 个有序对实测最大 **1004.7 ms**（≤1200） |
+| 点击 | 14/14 命中（总览机位投影逐台真实点击）；点击 = 选中 + 侧栏详情卡 + 推近，**不再跳转监控页**（偏差 D-55，跳转入口在详情卡「查看监控页」按钮） |
+| 巡游 | P 键或按钮触发，6 s/站循环（5 预设 + 回卷 = 6 站），任何鼠标操作立即退出 |
+| 键位 | `1`~`5` 切预设 / `R` 复位 / `P` 巡游（提示在 `viewport__hint`，不在 Layout，偏差 D-56） |
+| 调试 | `__sceneDebug` 增 `lastTransitionMs` / `transitionSeq` / `presets()` / `deviceBoxes()` / `deviceAnchors()` / `tour()`（均 DEV-only） |
+
 ---
 
 ## 2. 验证结果
@@ -94,30 +107,37 @@ STOPPED 用实例 `scale` 缩 0、`frustumCulled=false`、道具不可单独拾�
 \* D0 的数字是 `autoReset` 默认口径（只反映末次 render），**与 D1 之后的数字不可相减**（D-45）。
 D1 起统一用原子探针 `__sceneDebug.profile()` 一次读齐四项；分三次读会因跨帧得到 215 ≠ 187 的假数。
 
-### 2.2 本轮复跑（2026-11-25 16:40，写这份文件前）
+### 2.2 本轮复跑（2026-11-25 17:20，D3 收尾）
 
 ```text
 cd frontend && npx tsc --noEmit          → 0 error
-cd frontend && npm run test -- --run     → 10 files / 96 tests passed（9.56 s）
-git log --oneline | wc -l                → 29 个提交
-git ls-files | wc -l                     → 158 个跟踪文件
-git status --short                       → 空（工作区干净）
+cd frontend && npm run test -- --run     → 11 files / 101 tests passed（新增 5 条预设约束）
+node scripts/acceptance-batch2.mjs       → 24/24（10.2-6 已按 D-55 改写）
+node scripts/acceptance-d1.mjs           → 9/9
+node scripts/acceptance-d2.mjs           → 19/19
+node scripts/acceptance-d3.mjs           → 11/11
+git log --oneline | wc -l                → 32 个提交
+git status --short                       → 文档两件待交（本文件与验收记录的 D3 更新）
 ```
 
-D2 交付时的完整验收输出留在 `output/logs/d2_acceptance.log`（**不进 git**，本地文件）：
+D3 交付时的完整验收输出留在 `output/logs/d3_acceptance.log`（**不进 git**，本地文件）：
 
 ```text
-PASS  道具类别 ≥7  · 实际 7 类
-PASS  场景 draw call ≤ 100  · 实际 77
-PASS  场景 + 阴影 + 后处理 = 整链  · 147 vs 147
-PASS  道具 draw call ≤ 14  · 实际 10
-PASS  fps 中位 ≥ 50  · 实际 144.9
-PASS  6 个机位截图非空白（解码后平均亮度 22.6~27.3，<6 判黑）
-PASS  全程无页面运行时异常  · 0 条
-合计 19 项，通过 19，失败 0
+PASS  入场时长 3.0±0.2 s        · 3003.7 ms
+PASS  入场终点位姿 = overview   · 0.0,40.0,48.0
+PASS  预设数量 = 5              · overview / WS-A / WS-B / LINE-A1 / DEVICE
+PASS  14 台点击命中 100%        · 14 / 14
+PASS  预设切换 ≤ 1200 ms        · 最大 1004.7 ms (overview→WS-B)
+PASS  切换过程不穿设备          · 采样 121 次, 相交 0
+PASS  巡游一圈不重复不跳位      · 6 站
+PASS  鼠标点击立即退出巡游      · 已退出
+PASS  场景 draw call ≤ 100      · 实际 78（干净加载实测 77，+1 是选中描边，非场景增量）
+PASS  fps 中位 ≥ 50             · 实际 144.9
+PASS  全程无页面运行时异常      · 0 条
+合计 11 项，通过 11，失败 0
 ```
 
-D1 的 9 项（参数 6 + 开销 3）在 `output/logs/d1_acceptance.log`；AI 页 42 项与后端 24 项见验收文档 §8。
+D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/d2_acceptance.log`（均为本地文件）。
 
 ### 2.3 验证不到的部分（必须一起引用，不许单摘数字）
 
@@ -133,40 +153,36 @@ D1 的 9 项（参数 6 + 开销 3）在 `output/logs/d1_acceptance.log`；AI �
 
 ## 3. 下一步
 
-### 3.1 立即要做：D3 镜头与交互（2 人日）
+### 3.1 立即要做：D4 动效生命感（2 人日）
 
-**要证明的一句话**：进来不用教，就知道能转、能点、能回全景；切镜头不穿设备。
+**要证明的一句话**：静止看 10 秒能看出「这里在运转」，而不是一张贴图。
 
 改哪些文件：
 
 | 文件 | 改什么 |
 |---|---|
-| `frontend/src/three/cameraPresets.ts` | 预设 **3 个 → 5 个**（缺 `LINE-A1` / `DEVICE`，D-39） |
-| `frontend/src/three/SceneRoot.tsx` | 入场环绕、缓动、点击推近、巡游模式、`__sceneDebug` 增补（`camera().lastTransitionMs`） |
-| `frontend/src/pages/Overview.tsx` + 侧栏组件 | 点击后弹出设备详情 |
-| `frontend/src/components/Layout.tsx` | 巡游快捷键提示 |
+| `three/motion.ts` | 带速改造（§7.2：先做这个再调动效，否则参数调两遍）、机械臂摆动曲线、滚筒相位 |
+| `three/SceneRoot.tsx` | 警示灯旋转光斑、粒子系统接入渲染循环 |
+| 新增 `three/particles.ts` | 火花 / 冷却液雾，约 150 行 |
+| `three/materials.ts` | 光斑与粒子材质 |
 
-硬指标（规格 §4 第 5~7 条，逐条可脚本断言）：
+硬指标（规格 §4 第 12 / 13 条，逐条可脚本断言）：
 
 | # | 指标 | 目标 | 怎么测 |
 |---|---|---|---|
-| 5 | 14 台设备点击命中率 | **14 / 14** | `camera.project()` 算屏幕坐标 → `Input.dispatchMouseEvent` 逐台点击 → 断言侧栏标题等于设备名 |
-| 6 | 预设切换时长 | **≤1,200 ms**（5 个预设两两切换） | `performance.now()` 打点，读 `__sceneDebug.camera().lastTransitionMs` |
-| 7 | 入场时长 | **3.0 s ± 0.2 s** | 同上，取冷启动首次入场 |
+| 12 | 动效不同步 | ≥3 处持续运动、相位差中位数 >0.1 rad | 每 200 ms 采样 10 s，读 `__sceneDebug.motion()` |
+| 13 | 粒子开销 | draw call ≤4、帧率降 ≤10% | 角标 + 5 秒 rAF 中位数 |
 
-视觉判据：入场是「绕过来」不是瞬移；切换路径不穿过任何设备（每 50 ms 采一次相机位置与设备包围盒求交）；
-点击后能看清机身标签且侧栏有该设备指标；巡游每 6 秒换一个机位、循环不停；键位 `1`~`5` + `R` 复位。
+三个已知坑（规格 D4 风险，别重新踩）：
 
-三个已知坑（写进规格的 D3 风险，别重新踩）：
+1. 粒子数量必须与分辨率绑定（`Math.min(1, 1280/width)` 之类），并给一键关闭；
+2. 警示灯「旋转光斑」**必须用贴图 + 旋转面片**，真 SpotLight 每盏都会触发阴影重算；
+3. **先做 §7.2 带速改造再调动效**，同一文件，顺序反了参数要调两遍。
 
-1. 相邻设备预设之间缓动路径会擦过机身 → 中间控制点要抬高；
-2. 巡游与手动操作冲突 → **任何鼠标操作立即退出巡游**，否则演示时「镜头自己跑、拉不回来」；
-3. 推近后若不临时调 `near`，相机会切进机身内部。
+可用预算：draw call 干净加载 77，上限 100，余量 23 次；规格 D-52：若 D4 后超 90，先砍粒子数量，不砍道具。
+14 台设备的滚筒与机械臂要全有相位偏移（不是齐步走）；停机时物料停在闸门前排队的既有行为**不许改坏**。
 
-可用的预算：draw call 77，上限 100，**余量 23 次**；规格明确余量留给 D3（巡游指示）与 D4（粒子），
-若 D4 后超 90，先砍粒子数量，不砍道具（D-52）。
-
-### 3.2 之后三批（顺序可微调，D5 只动 DOM 层，随时可插）
+### 3.2 之后两批（顺序可微调，D5 只动 DOM 层，随时可插）
 
 | 批次 | 一句话目标 | 主要硬指标 |
 |---|---|---|
@@ -217,12 +233,13 @@ D1 的 9 项（参数 6 + 开销 3）在 `output/logs/d1_acceptance.log`；AI �
 3. 复跑基线，确认环境没坏：
 
    ```bash
-   cd frontend && npx tsc --noEmit && npm run test -- --run   # 期望 0 error / 96 passed
+   cd frontend && npx tsc --noEmit && npm run test -- --run   # 期望 0 error / 101 passed
    node scripts/acceptance-d1.mjs                              # 期望 9/9
    node scripts/acceptance-d2.mjs                              # 期望 19/19
+   node scripts/acceptance-d3.mjs                              # 期望 11/11
    ```
 
-4. 从 D3 的第一件事开始：`cameraPresets.ts` 补到 5 个预设，再进入场与点击。
+4. 从 D4 的第一件事开始：`three/motion.ts` 的 §7.2 带速改造（先于动效），再进粒子与光斑。
 5. 每完成一件事就提交；收尾时回来更新本文件的 §1 / §2 / §3 和 `README.md` 的「当前进度」表。
 
 ---
@@ -231,10 +248,10 @@ D1 的 9 项（参数 6 + 开销 3）在 `output/logs/d1_acceptance.log`；AI �
 
 | 想知道 | 去哪 |
 |---|---|
-| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2） |
+| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3） |
 | 施工规格：目标、七段字段、硬指标、验收命令 | `docs/spec_phase4.md` v4.0 |
 | D0 的 20 条问题清单 | `docs/audit_d0.md` |
-| 偏差 D-37 ~ D-54（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
+| 偏差 D-37 ~ D-56（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
 | 后端与数据层的规格 | `docs/spec_phase2.md` v1.1（冻结） |
 | 三维场景与五页前端的实现基线 | `docs/spec_phase3.md` v1.1（冻结） |
-| 截图与日志 | `output/d0/`、`output/d1/`、`output/d2/`、`output/logs/`（本地，不进 git） |
+| 截图与日志 | `output/d0/`、`output/d1/`、`output/d2/`、`output/d3/`、`output/logs/`（本地，不进 git） |
