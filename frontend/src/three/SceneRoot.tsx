@@ -45,6 +45,8 @@ declare global {
       lineMotion: () => MotionSnapshot;
       /** 实时设备状态表（WS 未连上时全为 null）：验收脚本据此推导哪条产线该被挡住 */
       deviceStates: () => Record<string, EffectiveState | null>;
+      /** 只给验收脚本用：把相机移到指定位姿。D0 的 6 张固定机位截图靠它复现，只存在于 DEV 分支 */
+      setCamera: (pose: CameraPose) => void;
     };
   }
 }
@@ -346,6 +348,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
           target: controls.target.toArray() as [number, number, number],
         }),
         lineMotion: () => motion.snapshot(),
+        setCamera: (pose: CameraPose) => moveTo(pose),
         deviceStates: () => {
           const current = readStore();
           const map: Record<string, EffectiveState | null> = {};
