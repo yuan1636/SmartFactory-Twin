@@ -23,7 +23,7 @@ D3 镜头与交互 / D4 动效生命感 / D5 界面层 / D6 性能与演示物�
 | **第 4 阶段 B（展示）** | **三维界面展示与演示能力** | **进行中：D0 / D1 / D2 / D3 + 追加批（产线完整化 / 四工况 / 环境层）已完成**；D4 剩余粒子、D5 界面层、D6 性能与演示物料待做 |
 
 - 第 3 阶段的施工依据是 `docs/spec_phase3.md`（**v1.1 已冻结**，v1.1 在 v1.0 上增补 §6.7 产线运行动画），验收记录见 `docs/acceptance_phase3.md`。
-- 第 4 阶段的施工依据是 `docs/spec_phase4.md`（**v4.0 生效**，2026-11-25 目标改为三维界面展示与演示能力：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结；v1.0 / v1.1 / v2.0 原文归档在 `docs/archive/`），验收记录见 `docs/acceptance_phase4.md` 第 8~13 节。
+- 第 4 阶段的施工依据是 `docs/spec_phase4.md`（**v4.0 生效**，2026-11-25 目标改为三维界面展示与演示能力：不做数据一致性验证、不接 Kafka、取消故障风险与产量预测、后端冻结；v1.0 / v1.1 / v2.0 原文归档在 `docs/archive/`），验收记录见 `docs/acceptance_phase4.md` 第 8~14 节。
 - **交接入口是 `PROGRESS.md`**：做过什么、验证到什么程度（含可复跑命令与实测数字）、下一步 D3 怎么开工，都在那一页。
 
 ## 目录结构
@@ -32,7 +32,7 @@ D3 镜头与交互 / D4 动效生命感 / D5 界面层 / D6 性能与演示物�
 AGENTS.md                    项目协作规则（最高优先级）
 docs/方案.md                 项目总体方案（实验方案 V1.0）
 docs/spec_phase2.md          第 2 阶段实现规格（v1.1 冻结）
-docs/spec_phase4.md          第 4 阶段实现规格（v4.0 生效：展示优先，含偏差 D-11～D-61）
+docs/spec_phase4.md          第 4 阶段实现规格（v4.0 生效：展示优先，含偏差 D-11～D-63）
 config/devices.json          14 台设备清单 + 正常区间 + 告警阈值 + 注入参数（唯一来源）
 database/schema.sql          建表脚本（10 表 / 15 索引，只建不删，可重复执行）
 database/migrate_timescale.sql  device_telemetry → hypertable + 压缩设置（可重复执行）

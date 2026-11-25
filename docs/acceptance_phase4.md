@@ -1397,3 +1397,75 @@ node scripts/acceptance-d3.mjs           → 11/11
 | §7.2 的 CONV `speed` → 带速数据连接 | 与"四工况固定带速"冲突：真实 CONV speed 可能是 0，A1 就不叫满负荷了。留到作者决定口径后再做（偏差 D-59） |
 | 三维与列表的一致性 | 有意不一致，视口有角标说明（D-59） |
 | 盲测（D2 遗留） | 仍需真人，脚本不代替 |
+
+-----
+
+# 第 14 节：背景改白底 + 去雾（作者 2026-11-25 第三次追加）
+
+## 14.0 为什么单独记一节
+
+作者在同一批里连提三次背景问题：先给两个色值做渐变，然后「背景颜色不要黑色的，换成亮一点的颜色」，
+最后「不要迷雾，把背景颜色换成白色」。三次都不是审美口味，而是**前两版都没生效**——
+查下来是 ACES 色调映射把近黑区压到了 0，填什么深色都是黑。这节记的是这个坑和最终口径。
+
+## 14.1 根因：ACES 把近黑压成 0（不是配色问题）
+
+整帧要过 `OutputPass` 的 `ACESFilmicToneMapping`（曝光 1.05），ACES 在近黑区斜率远小于 1：
+
+| 填进贴图 | ACES 后屏幕实测 |
+|---|---|
+| `#0a0f16`（作者最初给的顶部色） | `#000102` |
+| `#16202c`（最初给的中段色） | `#03070f` |
+| `#0d1319`（最初给的底部色） | `#010203` |
+
+所以「背景是黑的」与色值无关，深浅都救不回来——必须按显示色反解，或把值推到 HDR 空间。
+
+## 14.2 最终口径
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 雾 | **移除**（`scene.fog = null`） | 作者明确「不要迷雾」。远景不再淡出，靠白底与阴影拉层次 |
+| 背景 | 纯白贴图 + `scene.backgroundIntensity = 3.0` | 屏幕实测 `#f8f8f8` |
+| 清屏色 / `.viewport` 底色 | `#ffffff` | 圆角裁切与首帧不露深色 |
+| bloom 阈值 | `0.85` → **`3.2`** | 白底线性 3.0，阈值低于它整屏蒙白光——那层白光就是"雾感" |
+| 覆盖层文字 | 深色 `#47566a`；预设按钮改半透明白底 + 深色字 | 白底上原 ghost 样式（浅灰字）读不清 |
+
+**为什么不用 `scene.background = new THREE.Color(0xffffff)`**：
+Color 背景走 `gl.clearColor`，值被夹在 [0,1]；线性 1.0 过 ACES 后只有 `#d1d1d1`（浅灰）。
+贴图背景才有 `backgroundIntensity` 可推过 1 —— 实测 1.0 → `#d1d1d1`，2.0 → `#e9e9e9`，3.0 → `#f1f1f1`。
+
+## 14.3 验证（ACES 正算 + 截图取像素，两条独立路径）
+
+```text
+# 单测（frontend/src/three/sky.test.ts，131 条里新增 5 条）
+贴着 intensity=1 只有 #d1d1d1                    PASS
+按 SKY_INTENSITY=3.0 推亮后 ≥ #ee                  PASS
+bloomThreshold(3.2) > SKY_INTENSITY(3.0)，白底不泛光  PASS
+
+# 截图取像素（output/env/white_overview.png）
+画布左上 / 右上 / 顶部中 / 左中：均为 #f8f8f8（16 处采样一致，无渐变残留、无横向色带）
+```
+
+## 14.4 无回归
+
+```text
+cd frontend && npx tsc --noEmit          → 0 error
+cd frontend && npm run test -- --run     → 14 files / 131 tests passed
+node scripts/acceptance-d1.mjs           → 9/9（"雾参数对不对"改为"雾确实没了"；bloom 阈值 3.2）
+node scripts/acceptance-env.mjs          → 23/23（draw call 仍 84，fps 144.9）
+node scripts/acceptance-motion.mjs       → 17/17
+node scripts/acceptance-batch2.mjs       → 24/24
+node scripts/acceptance-d2.mjs           → 19/19
+node scripts/acceptance-d3.mjs           → 11/11
+```
+
+draw call 与帧率不受影响：背景本来就是一次贴图平面，改成白底不增加绘制体（84 / 54 / 17 = 155，fps 144.9）。
+四张交付截图的平均亮度从 25.3~28.3 升到 38.8~59.6（白底带来的，属预期）。
+
+## 14.5 已知取舍
+
+| 项 | 现状 | 如果要改 |
+|---|---|---|
+| bloom 实质不触发 | 阈值 3.2 高于场景内所有发光体（线性 <1），灯带不再有辉光 | 需要辉光时：把灯带材质改成 HDR（emissiveIntensity > 3.2），别把阈值调回去（会让白底泛白） |
+| 白底与深色 UI 的反差 | 画布纯白、外壳深色，观感偏"产品图" | 若要整套浅色主题，属于 D5 界面层的范围，本批不动 |
+| 场景内部偏暗 | 去掉雾后远景不再被提亮，暗部更实 | 需要提亮就调光照/环境光，不要加回雾（作者已明确不要） |

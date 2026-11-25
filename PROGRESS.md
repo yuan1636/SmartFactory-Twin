@@ -48,7 +48,7 @@
 > 这批的三条实测结论推翻了规格原判断（`pg_total_relation_size` 只量父表、压缩**会**压小索引、压缩块**可写**），
 > 见偏差 D-27 / D-28 / D-30。别按旧文档的直觉再写一遍。
 
-### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 / D3 + 追加批 已交付
+### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 / D3 + 追加批（含白底改造）已交付
 
 **D0 体检**（只产清单与基线，唯一代码改动是 dev-only `setCamera`，D-42）
 产出 `docs/audit_d0.md` 的 20 条问题清单（每条：截图文件 + 九宫格位置 + 现象 + 归属批次），
@@ -61,7 +61,7 @@
 | pass 链 | RenderPass → UnrealBloomPass → **OutputPass** → SMAAPass（零新增依赖，走 `three/examples/jsm`） |
 | 色调映射 | ACESFilmic(4)，exposure 1.05 |
 | Bloom | strength 0.35 / radius 0.6 / threshold 0.85 |
-| 雾 | Fog(28, 120)，色 `#0b1018`（等于背景色） |
+| 雾 | **本版已移除**（历史：Fog(28,120) → Fog(26,110) → 无雾） |
 | 材质 | 程序化混凝土地面（颗粒 + 6 m 分仓缝）、墙板（竖向板缝 + 踢脚线）；「幽灵墙」改实墙（D-47） |
 | 灯光 | 半球 1.55 / 主光 1.7 / 反侧补光 0.45（ACES 会压暗中间调，初版只加映射没补光反而更暗） |
 
@@ -100,7 +100,7 @@ STOPPED 用实例 `scale` 缩 0、`frustumCulled=false`、道具不可单独拾�
 | 物料 | 起步 accel、到位 decel（v=√(2a·余量)）、停 0.2~0.3 s；横向错位 ≤0.3 m、偏转 ≤±2°（种子确定）；逐线染色；纹路按本线带速 |
 | 灯 | 状态灯相位按 1.7 rad 步长错开、呼吸频率 0.44~0.56 Hz 三档轮转（禁止全场同步） |
 | 环境减法 | 围墙 12 面全删、管道 12→6、中线柱 3→1、桥架改沿墙（作者两次反馈「影响观看」） |
-| 背景 | 512×512 竖向渐变 #0a0f16→#16202c→#0d1319；雾 26~110 / #16202c；清屏色与 `--bg-scene` 统一 #0d1319 |
+| 背景 | **白底**（纯白贴图 + `backgroundIntensity` 3.0，屏幕实测 #f8f8f8）；**雾已移除**；清屏色与 `.viewport` 底色 #ffffff（作者三次反馈后定型，见 §14） |
 
 **三维与列表不一致是设计**：工况覆盖只改三维外观与闸门，页面列表/KPI 仍是真实 WS 数据，视口常驻「三维演示工况」角标（偏差 D-59）。
 
@@ -133,7 +133,7 @@ cd frontend && npm run test -- --run     → 13 files / 126 tests passed（新�
 node scripts/acceptance-env.mjs          → 23/23
 node scripts/acceptance-motion.mjs       → 17/17（改为工况感知）
 node scripts/acceptance-batch2.mjs       → 24/24
-node scripts/acceptance-d1.mjs           → 9/9（雾断言同步 26~110 / #16202c）
+node scripts/acceptance-d1.mjs           → 9/9（雾断言改为「已移除」，bloom 阈值 3.2）
 node scripts/acceptance-d2.mjs           → 19/19
 node scripts/acceptance-d3.mjs           → 11/11
 ```
@@ -231,6 +231,7 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | 7 | **规格 §3 D2 附注有笔误** | 原文写「三角形 1,162 → 16,769」，实测是 **10,922 → 16,769**。已在本次提交里改为实测值（D-54） |
 | 8 | **后端跑测试要先停 uvicorn** | 两进程抢写告警表，冷却类用例会随机失败 |
 | 9 | **围墙与管道已删，别按旧截图找** | 围墙 12 面全删、管道 12→6、中线柱只留 1 根；墙面标识改成落地立牌（D-57/D-58） |
+| 11 | **雾没了、背景是白的** | 别再把雾加回来（作者明确「不要迷雾」）；白底靠 `backgroundIntensity` 推到 HDR，改 bloom 阈值会让白底泛光（D-62/D-63） |
 | 10 | **三维与列表不一致是工况，不是 bug** | `scenario.ts` 覆盖设备状态，列表/KPI 用真实 WS；视口有「三维演示工况」角标（D-59） |
 
 ---
@@ -274,7 +275,7 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3） |
 | 施工规格：目标、七段字段、硬指标、验收命令 | `docs/spec_phase4.md` v4.0 |
 | D0 的 20 条问题清单 | `docs/audit_d0.md` |
-| 偏差 D-37 ~ D-61（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
+| 偏差 D-37 ~ D-63（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
 | 后端与数据层的规格 | `docs/spec_phase2.md` v1.1（冻结） |
 | 三维场景与五页前端的实现基线 | `docs/spec_phase3.md` v1.1（冻结） |
 | 截图与日志 | `output/d0/`、`output/d1/`、`output/d2/`、`output/d3/`、`output/env/`、`output/logs/`（本地，不进 git） |
