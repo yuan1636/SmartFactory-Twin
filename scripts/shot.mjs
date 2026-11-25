@@ -16,15 +16,29 @@ await session.send('Page.enable');
 await sleep(1500);
 
 if (full) {
+  // 先滚回顶部：整页截图应当从页面开头算起，否则会截到"从当前滚动位置往下"的一段。
+  // 滚动容器是 .content（见 global.css：.content { overflow: auto }），不是 window。
+  await session.evaluate(`(() => {
+    window.scrollTo(0, 0);
+    document.querySelector('.content')?.scrollTo(0, 0);
+  })()`);
+  await sleep(400);
   const metrics = await session.evaluate(`JSON.stringify({
     width: document.documentElement.scrollWidth,
-    height: Math.max(document.body.scrollHeight, document.querySelector('.page-scroll')?.scrollHeight ?? 0),
+    height: Math.ceil(
+      document.querySelector('.content')?.scrollHeight ||
+      document.body.scrollHeight ||
+      window.innerHeight
+    ),
     dpr: window.devicePixelRatio || 1,
   })`);
   const size = JSON.parse(metrics);
+  // 上限只是防呆（AI 页真实高度约 4 千多像素，放宽到 12000 足够覆盖任何页面）
+  const height = Math.min(12000, size.height);
+  console.log(`整页高度 ${size.height}px，按 ${height}px 截取`);
   await session.send('Emulation.setDeviceMetricsOverride', {
     width: 1680,
-    height: Math.min(4000, size.height),
+    height,
     deviceScaleFactor: 1,
     mobile: false,
   });

@@ -430,6 +430,11 @@ GET /api/v1/ml/anomaly/confusion
 
 ## 8.3 AI 页 42 项验收（`output/logs/phase4_ai_acceptance.log` 原文）
 
+> 这份日志是**某一次运行**的原文，与文件逐字一致。其中"分数曲线点数 / 判为异常点数"会随模拟器持续写入而变
+> （同一台设备 1 小时窗口，不同时刻跑出来是 1,769 / 1,770 点、217 / 197 / 239 个异常点都正常）。
+> 真正的判据不是这些绝对数字，而是"**页面显示的数 = 同一窗口重放接口得到的数**"——这条在任何一次运行里都必须成立。
+> 其余数字（模型指标、混淆矩阵四格、阈值、schema 指纹）来自 artifact，每次运行完全一致。
+
 ```text
 === 6.2 AI 页：模型输出区 ===
 PASS  6.2 模型区处于 loaded 态
@@ -456,12 +461,12 @@ PASS  6.2 四模型对比数据齐（4 个基线）  · threshold_rule,logistic_
 PASS  6.2 主模型标记唯一且为 XGBoost
 PASS  6.2 四模型对比图已渲染
 PASS  6.2 分数曲线图已渲染
-PASS  6.2 页面暴露了推理时间窗（可重放）  · CNC-01 2026-11-25T01:07:29+00:00 ~ 2026-11-25T02:07:29+00:00
-PASS  6.2 分数曲线点数与同窗重放一致  · 页面「1769」/ 接口「1769」
-PASS  6.2 分数曲线判为异常点数与同窗重放一致  · 页面「217」/ 接口「217」
+PASS  6.2 页面暴露了推理时间窗（可重放）  · CNC-01 2026-11-25T01:21:23+00:00 ~ 2026-11-25T02:21:23+00:00
+PASS  6.2 分数曲线点数与同窗重放一致  · 页面「1770」/ 接口「1770」
+PASS  6.2 分数曲线判为异常点数与同窗重放一致  · 页面「197」/ 接口「197」
 PASS  6.2 分数曲线真值区间段数与同窗重放一致  · 页面「1」/ 接口「1」
-PASS  6.2 曲线点数未超上限且未丢原始点  · 1769 / 1769
-PASS  6.2 模型在该窗口内确实判出了异常  · 217 点，最高分 1
+PASS  6.2 曲线点数未超上限且未丢原始点  · 1770 / 1770
+PASS  6.2 模型在该窗口内确实判出了异常  · 197 点，最高分 1
 PASS  6.4 异常真值时间轴仍在
 PASS  6.4 真值 vs 阈值告警对照仍在
 PASS  6.4 异常真值列表仍在
@@ -476,7 +481,7 @@ PASS  6.3 降级时页面没有抛异常  · 无
 PASS  6.3 解除拦截后自动恢复为 loaded 态  · data-ml-state=loaded
 PASS  6.3 恢复后指标卡重新出现
 PASS  6.2 全程无页面运行时异常  · 无
-截图已保存 output/shot_ai_model.png
+截图已保存 output/shot_ai_acceptance.png（视口截图，整页请用 shot.mjs --full）
 
 合计 42 项，通过 42，失败 0
 ```
@@ -625,8 +630,9 @@ DROP TABLE × 10 → SET / CREATE TABLE × 10 / CREATE INDEX × 15，0 ERROR
 
 | 文件 | 内容 |
 |---|---|
-| `output/shot_ai_model.png` | AI 页模型区：状态条、四指标卡、混淆矩阵、四模型对比、分数曲线 |
-| `output/shot_ai_score.png` | 分数曲线特写（折线 + 红色散点 + 橙色真值色块 + 阈值虚线） |
+| `output/shot_ai_model.png` | AI 页**整页**（1680×5823）：状态条 → 四指标卡 → 混淆矩阵 + 四模型对比 → 分数曲线 → 真值统计卡 → 异常真值时间轴 → 真值 vs 阈值告警对照 → 异常真值列表 |
+| `output/shot_ai_score.png` | 分数曲线特写（1662×904，视口截图）：折线 + 红色散点 + 橙色真值色块 + 阈值虚线 |
+| `output/shot_ai_acceptance.png` | `acceptance-ai.mjs` 结束时自动截的视口图（脚本自己产出，与 `shot.mjs` 分开命名，避免互相覆盖） |
 | `output/logs/phase4_ai_acceptance.log` | `acceptance-ai.mjs` 42 项完整日志（8.3 引用的就是它） |
 | `output/logs/phase4_batch2_rerun.log` | 4.2 批后 `acceptance-batch2.mjs` 复跑日志（24 项） |
 | `output/logs/phase4_motion_rerun.log` | 4.2 批后 `acceptance-motion.mjs` 复跑日志（17 项） |
@@ -636,7 +642,13 @@ DROP TABLE × 10 → SET / CREATE TABLE × 10 / CREATE INDEX × 15，0 ERROR
 
 ```powershell
 node scripts\shot.mjs output\shot_ai_model.png --full
+# 整页高度 5823px，按 5823px 截取
+# 已保存 output/shot_ai_model.png
 ```
+
+`--full` 的两个细节（都是踩过才知道的）：滚动容器是 `.content`（`.content { overflow: auto }`），
+不是 `window`，所以要先把它 `scrollTo(0, 0)` 再量 `.content.scrollHeight`；否则量到的是视口高度，
+截出来只有首屏。AI 页整页高 5823px，早先脚本把上限写死 4000，尾部异常真值列表会被截掉一半。
 
 > `output/` 与 `artifacts/` 都在 `.gitignore` 里：前者是本地验收证据（截图、DOM 快照、日志），
 > 后者是可由 `ml/` 下脚本重建的模型产物（体积大）。克隆仓库后这两处需要自己跑一遍才会出现。

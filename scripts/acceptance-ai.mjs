@@ -286,8 +286,10 @@ await session.evaluate(`(() => {
   return true;
 })()`);
 await sleep(600);
+// 注意：这里只截视口（Page.captureScreenshot 不带 captureBeyondViewport），
+// 想要整页大图请用 scripts/shot.mjs --full，两者输出路径故意分开，避免互相覆盖。
 const shot = await session.send('Page.captureScreenshot', { format: 'png' });
-writeFileSync('output/shot_ai_model.png', Buffer.from(shot.data, 'base64'));
-console.log('截图已保存 output/shot_ai_model.png');
+writeFileSync('output/shot_ai_acceptance.png', Buffer.from(shot.data, 'base64'));
+console.log('截图已保存 output/shot_ai_acceptance.png（视口截图，整页请用 shot.mjs --full）');
 
 process.exit(summarize() === 0 ? 0 : 1);
