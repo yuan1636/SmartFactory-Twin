@@ -93,7 +93,9 @@
   施工中抓到一个**接口真 bug**（D-34）：`/ml/anomaly/scores` 回显的窗口被 `iso()` 截到整秒而 SQL 用原始微秒查询，
   导致"同窗重放"差 1 行（约 1/3 概率），已修并补回归测试（撤掉修复后该测试确实失败）。
 - **作者 2026-11-24 的后续要求已登记**：①「三维产线要能动起来」→ 已实现（§6.7，17 项断言全过）；②「模型太粗糙」→ 作者确认**按计划留到第 6 阶段「优化与展示」**，`factory_models/` 继续为空占位，任何提前引入 GLB 的动作都属超范围。
-- **代码托管（2026-11-25 起）**：`origin` → GitHub `git@github.com:yuan1636/-.git`（公开仓库）。建仓时作者填的中文名「数字孪生」未被 GitHub 接受，实际存成了连字符 `-`，**已建议在 Settings 里改为 `SmartFactory-Twin`**；改名后需同步 `git remote set-url`（GitHub 会自动重定向旧链接，历史不受影响）。首次推送时远端只有一个自动生成的 `Initial commit`（README 内容为一行 `# -`），已用 `--force-with-lease` 覆盖。
+- **代码托管（2026-11-25 起）**：`origin` → GitHub **`git@github.com:yuan1636/SmartFactory-Twin.git`**（公开仓库，默认分支 `main`）。
+  建仓时作者填的中文名「数字孪生」未被 GitHub 接受，一度存成连字符 `-`；作者随后在 Settings 改名为 `SmartFactory-Twin`，本地 `remote` 已同步，旧链接 `github.com/yuan1636/-` 由 GitHub 自动重定向（历史不受影响）。
+  首次推送时远端只有一个自动生成的 `Initial commit`（README 内容为一行 `# -`），已用 `--force-with-lease` 覆盖。
   共 18 个提交、147 个跟踪文件，仓库 `.git` 体积 1.6 MB（历史中最大对象 0.14 MB，无大文件）。**每次改动都要提交，见 §4 规则 13。**
 - 第 3 阶段实施中产生的偏差已写入 `docs/spec_phase3.md` 第 12 节：**D-04** REST 改走 Vite `/api` 代理（后端无 CORS，直连必失败）；**D-05** dev 角标显示 draw call（便于脚本验收 10.1.6）；**D-06** 时间窗改用 `isoWindow()` 单次取时（否则 24h 窗口会因多出几毫秒被判 `RANGE_TOO_LARGE`）；**D-07** 4 个 DTO 按实机响应重写；**D-08** `__sceneDebug.camera()`（仅 dev，供脚本验缓动与不钻地）；**D-09** 增补 §6.7 产线运行动画（视觉动画不属于第 12 节禁止的物理仿真）；**D-10** `__sceneDebug.lineMotion()` / `deviceStates()`（仅 dev，供脚本断言闸门、队列与冻结）。
 - 第 3 阶段验收后仍保留两条人工判断项：动效观感（RUNNING 呼吸 / ALARM 闪烁是否刺眼）、真实帧率（无头环境是软渲染，不作结论）。
