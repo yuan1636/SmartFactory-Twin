@@ -16,11 +16,19 @@ import { CAMERA_PRESETS, ORBIT_LIMITS, focusPose, type CameraPose, type PresetKe
 import { createLabelRenderer } from './labels';
 import { DEVICE_LAYOUT } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
+import { createPostFx, FOG, POSTFX, type PostFx } from './postfx';
 
 export interface SceneStats {
+  /** 整链总 draw call（场景 + 所有后处理 pass），D1 起验收按这个数算 */
   calls: number;
   triangles: number;
   fps: number;
+  /** 只含场景的 draw call（不含后处理），D2 的「≤100」按这个数判 */
+  sceneCalls: number;
+  /** 阴影 pass 的 draw call（只与投影体数量有关） */
+  shadowCalls: number;
+  /** 后处理引入的额外 draw call = calls - sceneCalls - shadowCalls */
+  postPasses: number;
 }
 
 export interface SceneHandle {
@@ -47,6 +55,27 @@ declare global {
       deviceStates: () => Record<string, EffectiveState | null>;
       /** 只给验收脚本用：把相机移到指定位姿。D0 的 6 张固定机位截图靠它复现，只存在于 DEV 分支 */
       setCamera: (pose: CameraPose) => void;
+      /** 后处理参数读数（D1）：pass 链名字 + 曝光 + bloom 三项 + 雾 */
+      postfx: () => {
+        passes: string[];
+        exposure: number;
+        toneMapping: number;
+        bloom: { strength: number; radius: number; threshold: number };
+        fog: { near: number; far: number; color: string } | null;
+      };
+      /** 场景自身 draw call（不含后处理）：D2 的 ≤100 按它判 */
+      measureSceneCalls: (withShadows?: boolean) => {
+        sceneCalls: number;
+        sceneTriangles: number;
+        withShadows: boolean;
+      };
+      profile: () => {
+        total: number;
+        sceneCalls: number;
+        shadowCalls: number;
+        postPasses: number;
+        sceneTriangles: number;
+      };
     };
   }
 }
@@ -71,7 +100,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
   useImperativeHandle(ref, () => ({
     setPreset: (key) => apiRef.current?.setPreset(key),
     focusDevice: (id) => apiRef.current?.focusDevice(id),
-    getStats: () => apiRef.current?.getStats() ?? { calls: 0, triangles: 0, fps: 0 },
+    getStats: () => apiRef.current?.getStats() ?? { calls: 0, triangles: 0, fps: 0, sceneCalls: 0, shadowCalls: 0, postPasses: 0 },
   }));
 
   // 选中态变化只需要改描边，不必重建场景
@@ -85,15 +114,24 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     if (!host) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b1018);
+    scene.background = new THREE.Color(FOG.color);
+    // 雾色必须等于背景色，否则远景会出现一条色带（规格 §6.2）
+    scene.fog = new THREE.Fog(FOG.color, FOG.near, FOG.far);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 400);
     const preset = CAMERA_PRESETS.overview;
     camera.position.set(...preset.position);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    // antialias 关掉：接入 EffectComposer 后，默认帧缓冲的 MSAA 作用不到中间 target，
+    // 抗锯齿交给 postfx 里的 SMAAPass（D1 / 规格 §6.1）
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // ACESFilmic 必须在加 Bloom 之前设：NoToneMapping 下高光会被直接截断成纯白块
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = POSTFX.exposure;
+    // 关掉自动重置：一次 composer.render() 里包含多个 pass，只有累积才能量到真实总 draw call
+    renderer.info.autoReset = false;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.domElement.style.display = 'block';
@@ -111,10 +149,13 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     controls.dampingFactor = ORBIT_LIMITS.dampingFactor;
     controls.update();
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x223044, 0.9);
+    // ACESFilmic 会压暗中间调（这正是它的目的：保住高光），所以配合色调映射必须把光补回来，
+    // 否则设备细节全埋进暗部——D1 第一版就是这个症状：墙有了，但"看不清"（比 D0 更糟）。
+    // 冷天光 + 暖地光的半球光负责"体积感"，主方向光负责投影，反侧补光只提亮暗面、不投影。
+    const hemi = new THREE.HemisphereLight(0xdfe9f5, 0x2a3a4d, 1.55);
     scene.add(hemi);
 
-    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+    const dir = new THREE.DirectionalLight(0xfff4e2, 1.7);
     dir.position.set(30, 50, 20);
     dir.castShadow = true;
     dir.shadow.mapSize.set(2048, 2048);
@@ -126,8 +167,23 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     dir.shadow.camera.far = 160;
     scene.add(dir);
 
+    // 反侧补光：只负责把主光打不到的暗面从"全黑"提到"能看出轮廓"，不投影（投影会让画面脏）
+    const fill = new THREE.DirectionalLight(0x9dc4e8, 0.45);
+    fill.position.set(-40, 30, -25);
+    scene.add(fill);
+
     const build = buildFactory();
     scene.add(build.root);
+
+    // 后处理管线（D1 视觉基调）：RenderPass → Bloom → OutputPass → SMAA。
+    // 必须在 build 之后创建，否则首帧没有 bloom 与色调映射，截图会拍到"半成品"。
+    const postfx: PostFx = createPostFx(
+      renderer,
+      scene,
+      camera,
+      host.clientWidth || 1,
+      host.clientHeight || 1,
+    );
 
     // 产线运行动画（规格 6.7）。每帧只读一次 store，14 台设备共用同一个快照
     const motion = createMotion(build);
@@ -244,11 +300,40 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
+      postfx.setSize(width, height);
       labelRenderer.setSize(width, height);
     };
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(host);
+
+    /** 每帧重置计数再整链渲染：一次 composer.render() 跑 4 个 pass，只有重置后累积才量得到真实总 draw call */
+    const renderFrame = () => {
+      renderer.info.reset();
+      postfx.render();
+    };
+
+    /**
+     * 只量「场景自身」的 draw call：不含后处理，可选是否含阴影 pass。
+     * 三个数要分开，否则没法判断优化有没有效果：
+     *   - 场景（无阴影）= 几何合批管这个，D2 的 ≤100 按它判；
+     *   - 阴影 pass     = 只与投影体数量有关，和合批不是一回事；
+     *   - 后处理        = 与分辨率相关，与场景内容无关。
+     * 副作用是这一帧没有 bloom，下一帧 renderFrame 会覆盖，肉眼不可见。
+     */
+    let sceneCalls = 0;
+    let shadowCalls = 0;
+    const measureSceneCalls = (withShadows = false) => {
+      const prev = dir.castShadow;
+      dir.castShadow = withShadows;
+      renderer.info.reset();
+      renderer.render(scene, camera);
+      const calls = renderer.info.render.calls;
+      const triangles = renderer.info.render.triangles;
+      dir.castShadow = prev;
+      if (!withShadows) sceneCalls = calls;
+      return { sceneCalls: calls, sceneTriangles: triangles, withShadows };
+    };
 
     // ---------- 主循环 ----------
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -302,7 +387,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       motion.update(dt, stateOf);
       animateMaterial(t);
       controls.update();
-      renderer.render(scene, camera);
+      renderFrame();
       labelRenderer.render(scene, camera);
 
       frames += 1;
@@ -318,17 +403,45 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // 先同步渲染一帧：无头浏览器 / 后台标签页里 rAF 可能被节流，画布与 draw call 仍要能读出来
     motion.update(0, stateOf);
     controls.update();
-    renderer.render(scene, camera);
+    renderFrame();
     labelRenderer.render(scene, camera);
     setBadge(null);
 
     tick();
 
-    const getStats = (): SceneStats => ({
-      calls: renderer.info.render.calls,
-      triangles: renderer.info.render.triangles,
-      fps,
-    });
+    const getStats = (): SceneStats => {
+      const total = renderer.info.render.calls;
+      return {
+        calls: total,
+        triangles: renderer.info.render.triangles,
+        fps,
+        sceneCalls,
+        shadowCalls,
+        postPasses: Math.max(0, total - sceneCalls - shadowCalls),
+      };
+    };
+
+    /**
+     * 一次读齐四项：整链 / 场景（无阴影）/ 阴影 / 后处理。
+     * 为什么必须原子读：分几次读会跨帧，sceneCalls 可能已被上一次测量改写，
+     * 加不回总数（D1 调试时真的出现过 120+50+45=215 这种事）。
+     */
+    const profile = () => {
+      const total = renderer.info.render.calls; // 上一帧整链（含后处理）
+      const withShadow = measureSceneCalls(true).sceneCalls;
+      const noShadow = measureSceneCalls(false).sceneCalls;
+      shadowCalls = Math.max(0, withShadow - noShadow);
+      return {
+        total,
+        sceneCalls: noShadow,
+        shadowCalls,
+        postPasses: Math.max(0, total - withShadow),
+        sceneTriangles: measureSceneCalls(false).sceneTriangles,
+      };
+    };
+
+    // 主循环启动前先跑一次，保证角标与验收脚本第一次读到的不是 0
+    profile();
 
     apiRef.current = {
       setPreset: (key) => moveTo(CAMERA_PRESETS[key]),
@@ -349,6 +462,12 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         }),
         lineMotion: () => motion.snapshot(),
         setCamera: (pose: CameraPose) => moveTo(pose),
+        /** 后处理参数读数：D1 验收逐项比对规格 §6.1 的表 */
+        postfx: () => postfx.describe(),
+        /** 原子读四项开销：整链 / 场景 / 阴影 / 后处理（加不回总数就说明统计有漏） */
+        profile: () => profile(),
+        /** 场景自身 draw call，可选是否含阴影（D2 的 ≤100 按「不含阴影」判） */
+        measureSceneCalls: (withShadows?: boolean) => measureSceneCalls(withShadows ?? false),
         deviceStates: () => {
           const current = readStore();
           const map: Record<string, EffectiveState | null> = {};
@@ -369,6 +488,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
       motion.dispose();
+      postfx.dispose();
       build.dispose();
       scene.clear();
       renderer.dispose();

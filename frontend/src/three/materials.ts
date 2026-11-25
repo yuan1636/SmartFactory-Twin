@@ -6,6 +6,109 @@
 
 import * as THREE from 'three';
 import { STATE_META, type EffectiveState } from '../utils/status';
+import { FACTORY } from './layout';
+
+/**
+ * 程序化混凝土贴图：仓库里不放二进制贴图资源，用 canvas 现画。
+ * 组成 = 深色底 + 细颗粒噪声 + 6 m 一格的分仓缝。
+ * 为什么必须有它：纯色地面在深色场景里读不出"这是一大片地面"，所有设备像浮在虚空里（D0 问题 #3）。
+ */
+function makeConcreteTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法创建 canvas 2d 上下文，地面贴图生成失败');
+
+  ctx.fillStyle = '#1c2634';
+  ctx.fillRect(0, 0, size, size);
+
+  // 细颗粒：不做完全随机，按 4×4 块加扰动更像混凝土骨料，也不会在缩小时变成噪点雪花
+  const img = ctx.getImageData(0, 0, size, size);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
+      const grain = (Math.random() - 0.5) * 16;
+      const patch = Math.sin(x * 0.021) * Math.cos(y * 0.017) * 5;
+      const d = grain + patch;
+      img.data[i] = Math.max(0, Math.min(255, img.data[i] + d));
+      img.data[i + 1] = Math.max(0, Math.min(255, img.data[i + 1] + d));
+      img.data[i + 2] = Math.max(0, Math.min(255, img.data[i + 2] + d));
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // 分仓缝：贴图对应 6 m × 6 m，repeat 后自然形成整片网格
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(120, 150, 180, 0.06)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(2, 2, size - 4, size - 4);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(FACTORY.sizeX / 6, FACTORY.sizeZ / 6);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * 程序化墙板贴图：竖向板缝 + 踢脚线暗带。
+ * 为什么需要：实墙解决"没有背景"，但纯色墙在近景里仍是一块色板，
+ * 看不出是"厂房围护结构"（D0 问题 #1 / #2 的延伸）。
+ */
+function makeWallTexture(): THREE.CanvasTexture {
+  const w = 256;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法创建 canvas 2d 上下文，墙面贴图生成失败');
+
+  // 上亮下暗的竖向渐变，模拟高侧窗带来的天光衰减
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, '#28384a');
+  grad.addColorStop(0.55, '#1f2b3a');
+  grad.addColorStop(1, '#16202b');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // 竖向板缝：每 64px 一道（贴图映射到约 4 m，即每 1 m 一块板）
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.lineWidth = 3;
+  for (let x = 0; x <= w; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  // 板缝右侧的高光，让缝看起来是"凹进去"的
+  ctx.strokeStyle = 'rgba(150, 180, 210, 0.07)';
+  ctx.lineWidth = 2;
+  for (let x = 3; x <= w; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+
+  // 踢脚线：底部一条更暗的带，墙与地面的交界不再"糊在一起"
+  ctx.fillStyle = 'rgba(8, 12, 18, 0.75)';
+  ctx.fillRect(0, h - 14, w, 14);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping; // 竖向不重复：踢脚线只应出现在底部
+  tex.repeat.set(3, 1);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
 
 export interface StateMaterialPair {
   lamp: THREE.MeshBasicMaterial;
@@ -66,19 +169,28 @@ export function createMaterials(): SceneMaterials {
     });
   }
 
+  const floorTexture = makeConcreteTexture();
+  const wallTexture = makeWallTexture();
+
   return {
     states,
     disconnected: new THREE.MeshBasicMaterial({ color: 0x64748b, transparent: true, opacity: 1, toneMapped: false }),
     body,
     outline: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
-    floor: new THREE.MeshStandardMaterial({ color: 0x0f1722, roughness: 0.95, metalness: 0 }),
+    floor: new THREE.MeshStandardMaterial({
+      map: floorTexture,
+      color: 0xffffff, // 贴图自带基色，这里不再乘色，否则会二次压暗
+      roughness: 0.92,
+      metalness: 0.02,
+    }),
+    // 墙面：原来是 opacity 0.12 + depthWrite:false 的"幽灵墙"，截图里等于没有（D0 问题 #1）。
+    // 改成实墙：8 m 高、朝内可见，总览机位（y=40）仍能从墙顶看进车间内部。
     wall: new THREE.MeshStandardMaterial({
-      color: 0x2e9be6,
-      transparent: true,
-      opacity: 0.12,
+      map: wallTexture,
+      color: 0xffffff, // 贴图自带明暗与板缝，不再乘色
+      roughness: 0.88,
+      metalness: 0.06,
       side: THREE.DoubleSide,
-      depthWrite: false,
-      roughness: 0.9,
     }),
     strip: new THREE.MeshBasicMaterial({ color: 0x1e3a5f, transparent: true, opacity: 0.9 }),
     corridor: new THREE.MeshBasicMaterial({ color: 0x16222f }),
@@ -102,7 +214,9 @@ export function disposeMaterials(materials: SceneMaterials | null): void {
   materials.disconnected.dispose();
   for (const m of Object.values(materials.body)) m.dispose();
   materials.outline.dispose();
+  materials.floor.map?.dispose(); // 程序化贴图是运行时创建的，不 dispose 会在反复挂载时累积显存
   materials.floor.dispose();
+  materials.wall.map?.dispose();
   materials.wall.dispose();
   materials.strip.dispose();
   materials.corridor.dispose();
