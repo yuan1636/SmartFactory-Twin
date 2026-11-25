@@ -17,6 +17,7 @@ import { createLabelRenderer } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
 import { createPostFx, FOG, POSTFX, type PostFx } from './postfx';
+import { LINE_SCENARIOS, overriddenState, scenarioBadgeText } from './scenario';
 
 export interface SceneStats {
   /** 整链总 draw call（场景 + 所有后处理 pass），D1 起验收按这个数算 */
@@ -69,8 +70,22 @@ declare global {
       tour: () => { active: boolean; index: number; station: PresetKey };
       /** 产线运行动画快照：验收脚本用它确认物料在动、堵料时停在设备前、降级时冻结 */
       lineMotion: () => MotionSnapshot;
-      /** 实时设备状态表（WS 未连上时全为 null）：验收脚本据此推导哪条产线该被挡住 */
+      /** 实时设备状态表（含演示工况覆盖，与三维画面一致）：验收脚本据此推导哪条产线该被挡住 */
       deviceStates: () => Record<string, EffectiveState | null>;
+      /** 原始 WS 状态表（不含工况覆盖）：用来核对"图上与列表不一致是工况，不是数据错" */
+      wsDeviceStates: () => Record<string, EffectiveState | null>;
+      /** 四条线的演示工况（本批）：条件、料数、带速、状态覆盖 */
+      scenario: () => Array<{
+        lineId: string;
+        condition: string;
+        label: string;
+        itemCount: number;
+        itemTint: string;
+        speedFactor: number;
+        overrides: Record<string, EffectiveState>;
+      }>;
+      /** 环境层：类别清单 + 各组绘制体数量（验收断言"≤6 次"） */
+      env: () => { kinds: string[]; drawables: Array<{ group: string; meshes: number }> };
       /** 只给验收脚本用：把相机移到指定位姿。D0 的 6 张固定机位截图靠它复现，只存在于 DEV 分支 */
       setCamera: (pose: CameraPose) => void;
       /** 后处理参数读数（D1）：pass 链名字 + 曝光 + bloom 三项 + 雾 */
@@ -109,6 +124,26 @@ const DUR_ENTRANCE = 3000;
 const DUR_SETCAM = 600;
 const TOUR_INTERVAL_MS = 6000; // 巡游每 6 秒换一个机位（规格 D3）
 
+/** 512×512 竖向渐变背景（作者 2026-11-25 指定）：顶部 #0a0f16 → 中部 #16202c → 底部 #0d1319 */
+function makeBackgroundTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法创建 canvas 2d 上下文，背景渐变生成失败');
+  const grad = ctx.createLinearGradient(0, 0, 0, size);
+  grad.addColorStop(0, '#0a0f16');
+  grad.addColorStop(0.5, '#16202c');
+  grad.addColorStop(1, '#0d1319');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  // 贴图必须标 sRGB，否则渐变会被当线性值二次编码，整体发灰
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
   { selectedDeviceId = null, onSelectDevice, showFps = true },
   ref,
@@ -116,6 +151,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
   const hostRef = useRef<HTMLDivElement | null>(null);
   const fpsRef = useRef<HTMLDivElement | null>(null);
   const tourRef = useRef<HTMLDivElement | null>(null);
+  const scenarioRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<{
     setPreset: (key: PresetKey) => void;
     focusDevice: (deviceId: string) => void;
@@ -146,8 +182,12 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     if (!host) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(FOG.color);
-    // 雾色必须等于背景色，否则远景会出现一条色带（规格 §6.2）
+    // 背景改成 512×512 竖向渐变贴图（作者 2026-11-25）：纯色背景在仰视/俯视时像一块平涂的板，
+    // 渐变给出"天光方向"，远景淡出也更自然。
+    // 贴图背景**不受雾影响**（three 的固有行为），远处物体仍按 FOG 淡出——
+    // 雾色取渐变中段色 0x16202c，所以淡出终点与背景中段一致，不会出现横向接缝。
+    const backgroundTexture = makeBackgroundTexture();
+    scene.background = backgroundTexture;
     scene.fog = new THREE.Fog(FOG.color, FOG.near, FOG.far);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 400);
@@ -159,6 +199,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // 清屏色与页面 CSS 背景统一到背景渐变的最底部色，画布边缘/首帧不会露白
+    renderer.setClearColor(0x0d1319, 1);
     // ACESFilmic 必须在加 Bloom 之前设：NoToneMapping 下高光会被直接截断成纯白块
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = POSTFX.exposure;
@@ -220,9 +262,16 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // 产线运行动画（规格 6.7）。每帧只读一次 store，14 台设备共用同一个快照
     const motion = createMotion(build);
     let frameState = readStore();
+    /**
+     * 三维画面的"有效状态" = 演示工况覆盖 ?? 真实 WS 状态。
+     * 为什么要有覆盖：作者要求四条线四种可辨工况（A2 预警、B1 检修停住、B2 半停）。
+     * 覆盖只影响三维着色、闸门、滚筒与机械臂，**不改后端、不改数据库、不改 WS 契约**；
+     * 页面右侧列表与 KPI 仍显示真实数据，界面上有「三维演示工况」角标说明这一点。
+     * WS 断开时一律返回 null（不能拿工况假装有数据）。
+     */
     const stateOf = (deviceId: string): EffectiveState | null => {
       if (frameState.wsStatus !== 'connected') return null;
-      return frameState.byId[deviceId]?.state ?? null;
+      return overriddenState(deviceId) ?? frameState.byId[deviceId]?.state ?? null;
     };
 
     // 坐标表与后端设备清单不一致时大声报出来，不静默跳过（3.3）
@@ -248,7 +297,16 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       if (state.wsStatus === 'connected') {
         for (const device of state.devices) {
           const visual = build.devices.get(device.device_id);
-          if (visual) applyDeviceState(visual, device.state);
+          // 工况覆盖优先于 WS 状态（只改画面，见 stateOf 的说明）
+          if (visual) applyDeviceState(visual, overriddenState(device.device_id) ?? device.state);
+        }
+        // 兜底：被覆盖但不在 WS 快照里的设备（理论上不会有，出现了也不能静默漏掉）
+        for (const sc of LINE_SCENARIOS) {
+          for (const [id, overridden] of Object.entries(sc.stateOverrides)) {
+            if (state.byId[id]) continue;
+            const visual = build.devices.get(id);
+            if (visual) applyDeviceState(visual, overridden);
+          }
         }
       } else if (state.wsStatus === 'reconnecting' || state.wsStatus === 'disconnected') {
         applyDisconnected(build.devices.values());
@@ -709,6 +767,19 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         },
         /** D3：巡游状态 */
         tour: () => ({ active: tour.active, index: tour.index, station: PRESET_ORDER[tour.index] }),
+        /** 四条线的演示工况（本批）：验收据此断言"四线必须有可见差异" */
+        scenario: () =>
+          LINE_SCENARIOS.map((s) => ({
+            lineId: s.lineId,
+            condition: s.condition,
+            label: s.label,
+            itemCount: s.itemCount,
+            itemTint: s.itemTint,
+            speedFactor: s.speedFactor,
+            overrides: { ...s.stateOverrides },
+          })),
+        /** 环境层类别与各组绘制体数量：一物一 mesh 会在这里露馅 */
+        env: () => ({ kinds: build.envKinds, drawables: build.envDrawables }),
         lineMotion: () => motion.snapshot(),
         setCamera: (pose: CameraPose) => moveTo(pose, DUR_SETCAM),
         /** 后处理参数读数：D1 验收逐项比对规格 §6.1 的表 */
@@ -722,6 +793,14 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         /** 场景自身 draw call，可选是否含阴影（D2 的 ≤100 按「不含阴影」判） */
         measureSceneCalls: (withShadows?: boolean) => measureSceneCalls(withShadows ?? false),
         deviceStates: () => {
+          const current = readStore();
+          const map: Record<string, EffectiveState | null> = {};
+          for (const device of current.devices) {
+            map[device.device_id] = stateOf(device.device_id);
+          }
+          return map;
+        },
+        wsDeviceStates: () => {
           const current = readStore();
           const map: Record<string, EffectiveState | null> = {};
           for (const device of current.devices) {
@@ -745,6 +824,9 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       motion.dispose();
       postfx.dispose();
       build.dispose();
+      scene.background = null;
+      // 背景贴图不在 materials 池里，单独释放；否则反复挂载会累积显存
+      backgroundTexture.dispose();
       scene.clear();
       renderer.dispose();
       renderer.domElement.remove();
@@ -763,6 +845,11 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     >
       {showFps ? <div className="viewport__fps" ref={fpsRef}>— fps</div> : null}
       <div className="viewport__tour" ref={tourRef} style={{ display: 'none' }} />
+      {/* 三维演示工况角标：四条线四种工况是展示设定，不写在这里会被当成真实状态（必须一直可见） */}
+      <div className="viewport__scenario" ref={scenarioRef}>
+        <span className="viewport__scenario-tag">三维演示工况</span>
+        {scenarioBadgeText()}
+      </div>
       <div className="viewport__hint">左键拖拽旋转 · 滚轮缩放 · 点击设备看详情 · 键位 1~5 切视角 / R 复位 / P 巡游</div>
     </div>
   );

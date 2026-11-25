@@ -8,7 +8,8 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { EffectiveState } from '../utils/status';
 import { STATE_META } from '../utils/status';
-import { makeDeviceLabel, makeLineLabel, setLabelActive } from './labels';
+import { makeDeviceLabel, makeLineLabel, makeScenarioLabel, setLabelActive } from './labels';
+import { buildEnv } from './envBuilder';
 import {
   CORRIDOR,
   DEVICE_LAYOUT,
@@ -74,6 +75,10 @@ export interface FactoryBuild {
   lights: StatusLights;
   /** 已建立的工业道具类别（D2 验收断言"≥7 类"读它，不数 mesh） */
   propKinds: string[];
+  /** 环境层与产线补齐件的类别（本批新增，验收读它） */
+  envKinds: string[];
+  /** 环境层各组实际绘制体数量：合计必须 ≤6（一物一 mesh 会在这里露馅） */
+  envDrawables: Array<{ group: string; meshes: number }>;
   /** 输送机滚筒（按 device_id） */
   rollers: Map<string, RollerRig>;
   /** 机器人摆动枢轴（按 device_id） */
@@ -140,54 +145,16 @@ export function buildFactory(): FactoryBuild {
     root.add(mesh);
   };
 
-  // ---------- 墙体：全部合并成 1 个 mesh ----------
+  // ---------- 厂房围护：只留地坪，围墙已按作者要求移除（2026-11-25） ----------
   //
-  // 墙是静态的、同材质、无交互，8 面各占一次 draw call 纯属浪费。
-  // 把世界变换烘进顶点后合并成单个 BufferGeometry，draw call 从 8 降到 1（D2 合批）。
-  // 每面墙的 UV 仍各自 0~1，与合并前一致，视觉不变。
-
-  const wallParts: THREE.BufferGeometry[] = [];
-  const pushWall = (len: number, height: number, x: number, z: number, rotY = 0) => {
-    const geo = new THREE.BoxGeometry(len, height, 0.2);
-    geo.applyMatrix4(
-      new THREE.Matrix4().compose(
-        new THREE.Vector3(x, height / 2, z),
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0)),
-        new THREE.Vector3(1, 1, 1),
-      ),
-    );
-    wallParts.push(geo);
-  };
-
+  // 原来 8 面车间墙 + 动力站 4 面墙合并成 1 个 mesh（D2 合批）。作者看过后要求去掉：
+  // 8 m 高的实墙从斜侧机位直接挡住半个车间，看设备反而要绕着找角度。
+  // 「室内感」改由柱子 + 屋顶桁架 + 顶部灯带 + 桥架承担（envBuilder.ts），
+  // 这些竖向/顶部构件不挡视线。墙材质仍保留在 SceneMaterials 里，将来要做半高围挡可直接复用。
   for (const ws of WORKSHOPS) {
     addPave(ws.x, ws.z, ws.sizeX, ws.sizeZ, `pave:${ws.id}`);
-    const halfX = ws.sizeX / 2;
-    const halfZ = ws.sizeZ / 2;
-
-    pushWall(ws.sizeX, ws.height, ws.x, ws.z - halfZ);
-    pushWall(ws.sizeX, ws.height, ws.x, ws.z + halfZ);
-    // 东西两侧墙沿 Z 方向：长度取 sizeZ，不是 sizeX
-    pushWall(ws.sizeZ, ws.height, ws.x - halfX, ws.z, Math.PI / 2);
-    pushWall(ws.sizeZ, ws.height, ws.x + halfX, ws.z, Math.PI / 2);
   }
-
-  // 动力站
   addPave(POWER_STATION.x, POWER_STATION.z, POWER_STATION.sizeX, POWER_STATION.sizeZ, 'pave:AUX');
-  const psHalfX = POWER_STATION.sizeX / 2;
-  const psHalfZ = POWER_STATION.sizeZ / 2;
-  pushWall(POWER_STATION.sizeX, POWER_STATION.height, POWER_STATION.x, POWER_STATION.z - psHalfZ);
-  pushWall(POWER_STATION.sizeX, POWER_STATION.height, POWER_STATION.x, POWER_STATION.z + psHalfZ);
-  pushWall(POWER_STATION.sizeZ, POWER_STATION.height, POWER_STATION.x - psHalfX, POWER_STATION.z, Math.PI / 2);
-  pushWall(POWER_STATION.sizeZ, POWER_STATION.height, POWER_STATION.x + psHalfX, POWER_STATION.z, Math.PI / 2);
-
-  const mergedWall = mergeGeometries(wallParts, false);
-  for (const part of wallParts) part.dispose();
-  // 合并失败会直接返回 null，静默加一个空 mesh 会让"墙不见了"查半天，所以显式抛错
-  if (!mergedWall) throw new Error('墙体几何合并失败：各段属性不一致');
-  const wallMesh = new THREE.Mesh(track(mergedWall), materials.wall);
-  wallMesh.name = 'wall:merged';
-  wallMesh.receiveShadow = true;
-  root.add(wallMesh);
 
   // ---------- 产线色带：合并成 1 个 mesh（4 → 1）----------
 
@@ -389,14 +356,20 @@ export function buildFactory(): FactoryBuild {
     lamps,
     rings,
     update: (visuals, t, reduceMotion) => {
-      // 呼吸 0.5Hz（2 秒周期）；告警闪烁 1Hz（光敏安全上限，禁止更快）
-      const breath = reduceMotion ? 1 : 0.75 + 0.25 * (0.5 + 0.5 * Math.sin((t / 2) * Math.PI * 2));
-      const blink = reduceMotion ? 1 : 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
-      const slow = reduceMotion ? 0.8 : 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * Math.PI));
-
       for (const visual of visuals) {
         const state = visual.state;
         const base = state ? STATE_META[state].color : 0x64748b;
+
+        // 相位与频率逐台错开（作者要求：禁止全场同步呼吸）。
+        // 相位步长 1.7 rad 是无理数近似，14 台不会在某一刻重新聚齐；
+        // 频率在 0.44~0.56 Hz 之间三档轮转，肉眼是"各有各的节奏"，但不是乱闪。
+        const i = visual.lampIndex;
+        const phase = (i * 1.7) % (Math.PI * 2);
+        const breathFreq = 0.5 + ((i % 3) - 1) * 0.06;
+        const breath = reduceMotion ? 1 : 0.75 + 0.25 * (0.5 + 0.5 * Math.sin(t * breathFreq * Math.PI * 2 + phase));
+        // 告警闪烁仍守 1 Hz（光敏安全上限，频率扰动 ±6% 但不快过 1.06 Hz）
+        const blink = reduceMotion ? 1 : 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 + phase));
+        const slow = reduceMotion ? 0.8 : 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.5 * Math.PI + phase));
 
         let lampK = 1;
         if (state === 'RUNNING') lampK = breath;
@@ -455,14 +428,36 @@ export function buildFactory(): FactoryBuild {
   const props = buildProps();
   root.add(props.root);
 
+  // ---------- 环境层与产线补齐件（本批）----------
+  // 六个合并组封顶 draw call；B1 的「维修中」用 CSS2D 标签（DOM，不占 draw call）
+  const env = buildEnv();
+  root.add(env.root);
+  for (const label of env.maintenanceLabels) {
+    const obj = makeScenarioLabel(label.text);
+    obj.position.set(label.x, label.y, label.z);
+    root.add(obj);
+  }
+
   const dispose = () => {
     for (const geo of geometries) geo.dispose();
     grid.dispose?.();
     props.dispose();
+    env.dispose();
     disposeMaterials(materials);
   };
 
-  return { root, devices, materials, lights, propKinds: props.kinds, rollers, arms, dispose };
+  return {
+    root,
+    devices,
+    materials,
+    lights,
+    propKinds: props.kinds,
+    envKinds: env.kinds,
+    envDrawables: env.drawables,
+    rollers,
+    arms,
+    dispose,
+  };
 }
 
 /** 坐标表里没有的设备：堆到动力站旁并在控制台报警，不静默跳过（3.3）。 */

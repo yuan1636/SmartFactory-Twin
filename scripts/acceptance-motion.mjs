@@ -71,16 +71,19 @@ async function checkGates(s) {
       m.lines.map((l) => `${l.lineId}:${l.running ? '通' : `堵@${l.blockedBy}`}`).join(' '),
   );
 
+  // 本批起四条线四种工况（料数 9/8/6/5），阈值按各自工况的料数取 min(5, itemCount)
+  const scn = await s.evaluate('window.__sceneDebug.scenario().reduce((a, x) => (a[x.lineId] = x, a), {})');
   check(
     '每条产线上都有可见物料（不是空跑）',
-    m.lines.every((l) => l.visibleItems >= 5),
+    m.lines.every((l) => l.visibleItems >= Math.min(5, scn[l.lineId]?.itemCount ?? 5)),
     m.lines.map((l) => `${l.lineId}=${l.visibleItems}/${l.items.length}`).join(' '),
   );
   return m;
 }
 
 async function checkMovement(s, m0) {
-  const free = m0.lines.find((l) => l.running);
+  // 取速度最高且通畅的线：B2 是 0.84 m/s 的换型待料，2 秒位移太小，不能当样本
+  const free = m0.lines.filter((l) => l.running && l.speed > 0).sort((a, b) => b.speed - a.speed)[0];
   if (!free) {
     check('存在通畅产线（否则位移断言无从谈起）', false, '四条线全被挡住，请先确认设备状态');
     return;
@@ -105,8 +108,14 @@ async function checkMovement(s, m0) {
     `最大 ${round(Math.max(...forward))} m / 2s`,
   );
 
-  const cleatMoved = m1.lines.every((l, i) => Math.abs(l.cleat - m0.lines[i].cleat) > 0.05);
-  check('6.7 带面纹路在滚动', cleatMoved, m1.lines.map((l, i) => `${l.lineId}:${m0.lines[i].cleat}→${l.cleat}`).join(' '));
+  // 本批起纹路跟随本线带速：B1 检修（速度 0）纹路本来就不该动，只查有速度的线
+  const moving = m1.lines.filter((l) => l.speed > 0);
+  const cleatMoved = moving.every((l) => {
+    const before = m0.lines.find((x) => x.lineId === l.lineId);
+    return Math.abs(l.cleat - before.cleat) > 0.05;
+  });
+  check('6.7 带面纹路随本线带速滚动（速度 0 的线不动）', cleatMoved,
+    moving.map((l) => `${l.lineId}:${m0.lines.find((x) => x.lineId === l.lineId).cleat}→${l.cleat}`).join(' '));
 }
 
 async function checkQueue(s, m0) {
@@ -115,6 +124,8 @@ async function checkQueue(s, m0) {
   // 只有全都是告警时才退而用告警，否则队列会在采样过程中反复散掉。
   const candidates = [];
   for (const line of m0.lines) {
+    // 冻结线（本批的 B1 检修，速度 0）不会自己把料喂到闸门前，排队现象只在有速度的线上发生
+    if (line.speed === 0) continue;
     for (const gate of line.gates.filter((g) => g.closed)) {
       candidates.push({ line, gate, state: states[gate.deviceId] });
     }
@@ -205,8 +216,11 @@ async function checkSpinAndArms(s) {
       `${armStopped.deviceId} ${armStopped.angle} → ${m1.arms.find((a) => a.deviceId === armStopped.deviceId).angle} rad`);
   }
 
-  const stats = await s.evaluate('window.__sceneDebug.renderInfo()');
-  check('9 draw call 仍在预算内（≤150）', stats.calls <= 150, `${stats.calls} calls / ${stats.triangles} 三角形 / ${stats.fps} fps（无头软渲染，帧率仅诊断）`);
+  // 第 4 阶段统一口径（规格 §4 第 1 条 / D-41）：预算按「场景」算 ≤100；
+  // 整链 = 场景 + 阴影 + 后处理，只作信息打印（第 3 阶段的 150 整链旧口径已作废）
+  const stats = await s.evaluate('window.__sceneDebug.profile()');
+  check('9 场景 draw call 在预算内（≤100，第 4 阶段口径）', stats.sceneCalls <= 100,
+    `${stats.sceneCalls} 场景 + ${stats.shadowCalls} 阴影 + ${stats.postPasses} 后处理 = ${stats.total} 整链`);
 }
 
 async function checkReducedMotion(s) {

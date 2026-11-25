@@ -65,8 +65,9 @@ const main = async () => {
       && Math.abs(p.bloom.threshold - 0.85) < 0.01,
     `${p.bloom.strength} / ${p.bloom.radius} / ${p.bloom.threshold}`,
   );
-  check('雾为 Fog(near=28, far=120) 且雾色等于背景 #0b1018',
-    !!p.fog && p.fog.near === 28 && p.fog.far === 120 && p.fog.color === '#0b1018',
+  // 作者 2026-11-25 调整：near 28→26、far 120→110，雾色改为背景渐变中段色 #16202c
+  check('雾为 Fog(near=26, far=110) 且雾色取背景渐变中段 #16202c',
+    !!p.fog && p.fog.near === 26 && p.fog.far === 110 && p.fog.color === '#16202c',
     p.fog ? `${p.fog.color} ${p.fog.near}~${p.fog.far}` : '无雾');
 
   // 先读整链总数，再测场景自身（measureSceneCalls 会额外渲一帧，必须在前面读）

@@ -137,3 +137,101 @@ describe('产线物料流动（一维队列）', () => {
     expect(positions.every((n) => n >= 0 && n <= 10)).toBe(true);
   });
 });
+
+describe('物料动力学：起步加速 / 到位减速 / 停顿（本批新增）', () => {
+  const dynBase: FlowOptions = {
+    positions: [0],
+    gates: [],
+    start: 0,
+    end: 1000,
+    recycleTo: -3,
+    speed: 2,
+    dt: 0.1,
+    spacing: 3,
+    stopGap: 0,
+    velocities: [0],
+    dwell: [0],
+    targetSpeed: 2,
+    accel: 1.6,
+    decel: 2.4,
+    dwellSeconds: 0.25,
+  };
+
+  const step = (opt: FlowOptions) => {
+    const r = advanceFlow(opt);
+    return { ...opt, positions: r.positions, velocities: r.velocities, dwell: r.dwell };
+  };
+
+  it('从静止起步只走 accel×dt，不是立刻全速', () => {
+    const r = advanceFlow(dynBase);
+    expect(r.velocities[0]).toBeCloseTo(0.16, 3);
+    expect(r.positions[0]).toBeCloseTo(0.016, 3);
+  });
+
+  it('加速到目标速度后不再增加（约 1.3 秒达到 2 m/s）', () => {
+    let s = dynBase;
+    for (let i = 0; i < 30; i += 1) s = step(s);
+    expect((s.velocities as number[])[0]).toBeCloseTo(2, 2);
+    const before = s.positions[0];
+    s = step(s);
+    expect(s.positions[0] - before).toBeCloseTo(0.2, 2);
+  });
+
+  it('到位前按刹车距离减速（v ≤ √(2·a·余量)），不是到了才急停', () => {
+    const r = advanceFlow({
+      ...dynBase,
+      positions: [99.5],
+      velocities: [2],
+      gates: [{ x: 100, deviceId: 'CNC-01' }],
+    });
+    expect(r.velocities[0]).toBeLessThan(2);
+    expect(r.velocities[0]).toBeLessThanOrEqual(Math.sqrt(2 * 2.4 * 0.5) + 1e-6);
+    expect(r.positions[0]).toBeGreaterThan(99.5);
+    expect(r.positions[0]).toBeLessThanOrEqual(100);
+  });
+
+  it('停在限制位后停顿 0.2~0.3 秒，闸门开了也要先停够', () => {
+    let s: FlowOptions = {
+      ...dynBase,
+      positions: [99.9],
+      velocities: [2],
+      gates: [{ x: 100, deviceId: 'CNC-01' }],
+    };
+    // 先跑到位
+    for (let i = 0; i < 30; i += 1) s = step(s);
+    expect(s.positions[0]).toBeCloseTo(100, 2);
+    expect((s.dwell as number[])[0]).toBeCloseTo(0.25, 2);
+
+    // 闸门打开，但停顿期内不许动
+    const open: FlowOptions = { ...s, gates: [] };
+    const a = step(open);
+    expect(a.positions[0]).toBeCloseTo(100, 3);
+    const b = step(a);
+    expect(b.positions[0]).toBeCloseTo(100, 3);
+    // 三帧后（0.3 s > 0.25 s）开始重新加速
+    const c = step(b);
+    const d = step(c);
+    expect(d.positions[0]).toBeGreaterThan(100);
+  });
+
+  it('带速为 0（检修）时物料完全不动', () => {
+    let s: FlowOptions = { ...dynBase, targetSpeed: 0, speed: 0, positions: [5], velocities: [0] };
+    for (let i = 0; i < 20; i += 1) s = step(s);
+    expect(s.positions[0]).toBeCloseTo(5, 5);
+    expect((s.velocities as number[])[0]).toBe(0);
+  });
+
+  it('动力学下两台料也不会穿过闸门或叠在一起', () => {
+    let s: FlowOptions = {
+      ...dynBase,
+      positions: [98, 95],
+      velocities: [2, 2],
+      dwell: [0, 0],
+      gates: [{ x: 100, deviceId: 'CNC-01' }],
+    };
+    for (let i = 0; i < 300; i += 1) s = step(s);
+    const [head, tail] = s.positions;
+    expect(head).toBeCloseTo(100, 1);
+    expect(tail).toBeCloseTo(97, 1); // 按料距 3 m 排队
+  });
+});

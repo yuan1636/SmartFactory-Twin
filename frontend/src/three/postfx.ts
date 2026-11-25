@@ -29,7 +29,12 @@ export const POSTFX = {
   bloomThreshold: 0.85,
 } as const;
 
-export const FOG = { color: 0x0b1018, near: 28, far: 120 } as const;
+/**
+ * 雾：作者 2026-11-25 调整（near 28→26、far 120→110）：让远处更早淡出，纵深感更强。
+ * 雾色 0x16202c 正好取背景渐变的中段色——远处物体淡出到"中段天空色"，
+ * 上下两端（更暗）不会被雾冲淡成一条色带。
+ */
+export const FOG = { color: 0x16202c, near: 26, far: 110 } as const;
 
 export interface PostFx {
   render: () => void;

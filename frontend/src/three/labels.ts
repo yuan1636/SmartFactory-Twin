@@ -24,6 +24,21 @@ export function makeLineLabel(text: string): CSS2DObject {
   return obj;
 }
 
+/**
+ * 场景级说明标签（本批：B1 的「维修中」）。
+ * 为什么用 HTML 而不是贴图：canvas 画中文依赖系统字体，跨机器会糊/变豆腐块；
+ * CSS2D 是 DOM，字体由页面统一提供，稳定且不占 draw call。
+ */
+export function makeScenarioLabel(text: string): CSS2DObject {
+  const el = document.createElement('div');
+  el.className = 'device-label scenario-label';
+  el.dataset.scenarioLabel = text;
+  el.textContent = text;
+  const obj = new CSS2DObject(el);
+  obj.center.set(0.5, 1);
+  return obj;
+}
+
 export function setLabelActive(label: CSS2DObject, active: boolean): void {
   label.element.classList.toggle('is-active', active);
 }

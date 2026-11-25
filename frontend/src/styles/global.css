@@ -597,6 +597,38 @@ textarea {
   z-index: 5;
 }
 
+/* 三维演示工况角标（本批）：四条线四种工况是展示设定，必须一直可见 */
+.viewport__scenario {
+  position: absolute;
+  bottom: 26px;
+  left: var(--sp-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(11, 16, 24, 0.68);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.viewport__scenario-tag {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* B1「维修中」标签（CSS2D，中文稳、不占 draw call） */
+.scenario-label {
+  color: #ffd8d8;
+  border-color: rgba(239, 68, 68, 0.8);
+  background: rgba(60, 12, 12, 0.82);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* D3 巡游角标：纯 DOM 提示，不占 draw call（D-52 的预算留给 D4 粒子）。
    放左上角：右上角是预设按钮排，放中间会压住它们（实拍发现） */
 .viewport__tour {
