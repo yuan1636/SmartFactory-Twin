@@ -2,7 +2,15 @@
 
 import type { EChartsCoreOption } from 'echarts/core';
 import { METRIC_META } from '../services/format';
-import type { MetricKey, MetricRange, OrderItem, TelemetryPoint } from '../services/types';
+import type {
+  ConfusionPayload,
+  MetricKey,
+  MetricRange,
+  ModelBaseline,
+  OrderItem,
+  ScorePayload,
+  TelemetryPoint,
+} from '../services/types';
 import { axisStyle, baseGrid, CHART_SPLIT, CHART_TEXT, CHART_TEXT_MUTED, tooltipStyle } from './init';
 
 /**
@@ -293,6 +301,303 @@ export function ganttOption(categories: string[], tasks: GanttTask[]): EChartsCo
             style: api.style(),
           };
         },
+      },
+    ],
+    textStyle: { color: CHART_TEXT },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 第 4 阶段：AI 模型可视化（spec_phase4 §6.2）                         */
+/* ------------------------------------------------------------------ */
+
+/** 混淆矩阵四格的语义颜色。不按数值做色阶：TN 12 万、FP 221 差三个数量级， */
+/** 线性色阶会让所有"错"的格子变成白色，而这恰恰是要看的地方。            */
+const CONFUSION_COLORS = {
+  tn: { bg: '#1b2b3f', border: '#2c4560', text: '#94a6bd', label: '真负 TN' },
+  fp: { bg: '#4a2d12', border: '#b45309', text: '#fbbf24', label: '假正 FP（误报）' },
+  fn: { bg: '#4a1d1d', border: '#b91c1c', text: '#fca5a5', label: '假负 FN（漏报）' },
+  tp: { bg: '#14351f', border: '#15803d', text: '#86efac', label: '真正 TP（检出）' },
+} as const;
+
+/**
+ * AI 页：混淆矩阵热力图。
+ * 2×2 用 heatmap 而不是 HTML 表格，是为了和页面其余图表同源（同一个 ChartCard 容器、
+ * 同一套 resize/dispose 逻辑），且导出图片时是矢量一致的。
+ */
+export function confusionHeatmapOption(payload: ConfusionPayload): EChartsCoreOption {
+  const [[tn, fp], [fn, tp]] = payload.matrix;
+  const rowTotals = [tn + fp, fn + tp];
+  const cells: Array<[number, number, number, keyof typeof CONFUSION_COLORS]> = [
+    [0, 0, tn, 'tn'],
+    [1, 0, fp, 'fp'],
+    [0, 1, fn, 'fn'],
+    [1, 1, tp, 'tp'],
+  ];
+  return {
+    animation: false,
+    // ECharts 的 heatmap 强制要求配 visualMap，否则渲染期抛
+    // "Heatmap must use with visualMap"（实测踩到，整页白屏）。
+    // 这里把 visualMap 设为不显示：颜色由每个格子的 itemStyle 显式给出
+    //（TN/FP/FN/TP 按语义上色，而不是按数值上色），它只负责满足图表类型的前置条件。
+    visualMap: {
+      show: false,
+      min: 0,
+      max: 1,
+      inRange: { color: ['#1b2b3f'] },
+    },
+    // 左侧留出 y 轴标签宽度，右侧给色块说明留白
+    grid: { left: 84, right: 16, top: 32, bottom: 40, containLabel: false },
+    tooltip: {
+      ...tooltipStyle(),
+      formatter: (raw: unknown) => {
+        const item = raw as { data: { value: [number, number, number, string] } };
+        const [x, y, value, rawKey] = item.data.value;
+        const meta = CONFUSION_COLORS[rawKey as keyof typeof CONFUSION_COLORS];
+        const share = rowTotals[y] ? (value / rowTotals[y]) * 100 : 0;
+        return [
+          `真实：${payload.labels[y]}　预测：${payload.labels[x]}`,
+          `${meta.label}：${value.toLocaleString('zh-CN')}（占该行 ${share.toFixed(3)}%）`,
+        ].join('<br/>');
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: payload.labels.map((label) => `预测 ${label}`),
+      ...axisStyle(),
+      splitLine: { show: false },
+      axisLabel: { color: CHART_TEXT_MUTED, fontSize: 11 },
+    },
+    yAxis: {
+      type: 'category',
+      data: payload.labels.map((label) => `真实 ${label}`),
+      ...axisStyle(),
+      splitLine: { show: false },
+      axisLabel: { color: CHART_TEXT_MUTED, fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'heatmap',
+        data: cells.map(([x, y, value, key]) => ({
+          value: [x, y, value, key],
+          itemStyle: {
+            color: CONFUSION_COLORS[key].bg,
+            borderColor: CONFUSION_COLORS[key].border,
+            borderWidth: 1,
+          },
+        })),
+        label: {
+          show: true,
+          formatter: (raw: unknown) => {
+            const item = raw as { value: [number, number, number, string] };
+            const [, y, value] = item.value;
+            const share = rowTotals[y] ? (value / rowTotals[y]) * 100 : 0;
+            // 数值与占比分两行：单行在 2×2 的大格子里会显得很空
+            return `${value.toLocaleString('zh-CN')}\n${share.toFixed(3)}%`;
+          },
+          fontSize: 13,
+          lineHeight: 18,
+          color: CHART_TEXT,
+        },
+        // 2×2 的格子撑满分配区域，不留缝
+        itemStyle: { borderRadius: 3 },
+      },
+    ],
+    textStyle: { color: CHART_TEXT },
+  };
+}
+
+/**
+ * AI 页：四模型 PR-AUC 对比。
+ * 只画 PR-AUC 一个指标：四个模型 × 多个指标并排会变成 12 根柱子，反而看不出差别。
+ * 主模型用亮绿，其余用同色系暗色，眼睛先看到"用的是哪个"。
+ */
+export function modelCompareOption(baselines: ModelBaseline[]): EChartsCoreOption {
+  const ordered = [...baselines].sort((a, b) => (a.is_primary ? 1 : 0) - (b.is_primary ? 1 : 0));
+  return {
+    animation: false,
+    grid: { left: 52, right: 16, top: 28, bottom: 46, containLabel: false },
+    tooltip: {
+      trigger: 'axis',
+      ...tooltipStyle(),
+      formatter: (raw: unknown) => {
+        const list = (Array.isArray(raw) ? raw : [raw]) as Array<{ dataIndex: number; value: number }>;
+        const index = list[0]?.dataIndex ?? 0;
+        const item = ordered[index];
+        if (!item) return '';
+        return [
+          item.label,
+          `PR-AUC：${item.pr_auc?.toFixed(4) ?? '—'}`,
+          `召回：${item.recall != null ? (item.recall * 100).toFixed(2) + '%' : '—'}`,
+          `精确：${item.precision != null ? (item.precision * 100).toFixed(2) + '%' : '—'}`,
+          `区间检出：${item.detection_rate != null ? (item.detection_rate * 100).toFixed(2) + '%' : '—'}`,
+        ].join('<br/>');
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: ordered.map((item) => item.label),
+      ...axisStyle(),
+      splitLine: { show: false },
+      axisLabel: { color: CHART_TEXT_MUTED, fontSize: 10, interval: 0 },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 1,
+      ...axisStyle(),
+      axisLabel: { color: CHART_TEXT_MUTED, fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        barMaxWidth: 40,
+        data: ordered.map((item) => ({
+          value: item.pr_auc ?? 0,
+          itemStyle: {
+            color: item.is_primary ? '#22c55e' : '#3b5a7d',
+            borderRadius: [3, 3, 0, 0],
+          },
+        })),
+        label: {
+          show: true,
+          position: 'top',
+          color: CHART_TEXT,
+          fontSize: 11,
+          formatter: (raw: unknown) => {
+            const item = raw as { value: number };
+            return Number(item.value).toFixed(3);
+          },
+        },
+      },
+    ],
+    textStyle: { color: CHART_TEXT },
+  };
+}
+
+/**
+ * AI 页：异常分数曲线（全页最有说服力的一张图）。
+ *
+ * 三样东西叠在一起：
+ * - 折线 = 模型逐点给出的异常分数；
+ * - 红色散点 = 被判为异常的点（超过阈值的那些）；
+ * - 半透明色块 = 注入真值的区间，颜色按异常类型区分。
+ *
+ * 看这张图要问的是「红色散点是否落在色块里、色块里是否都有红色散点」，
+ * 也就是漏报和误报在时间上的分布，比一个 F1 数字直观得多。
+ *
+ * 纵轴保持线性 0~1（没有换成对数轴）：常态分数在 1e-5 量级，线性轴下确实贴近底部，
+ * 但换成对数轴会让 0.0079 的阈值线跑到 70% 高度，看起来像"阈值很高"——那才是真的误导。
+ * 贴底是数据的真实形态，页面用脚注说明即可。
+ */
+export function scoreCurveOption(payload: ScorePayload): EChartsCoreOption {
+  const line = payload.points.map((point) => [point.ts, point.score]);
+  const flagged = payload.points
+    .filter((point) => point.is_anomaly)
+    .map((point) => [point.ts, point.score]);
+
+  const markAreaData = payload.intervals.map((interval) => {
+    const meta = ANOMALY_META[interval.anomaly_type];
+    return [
+      {
+        xAxis: interval.started_at,
+        name: meta?.label ?? interval.anomaly_type,
+        itemStyle: { color: meta?.color ?? CHART_TEXT_MUTED, opacity: 0.2 },
+      },
+      { xAxis: interval.ended_at },
+    ];
+  });
+
+  return {
+    animation: false,
+    // top 留 40 给图例：两个 series（折线 + 散点）不标出来，读者只能靠脚注猜红线是什么
+    grid: { left: 52, right: 16, top: 40, bottom: 46, containLabel: false },
+    legend: {
+      data: ['异常分数', '判为异常'],
+      textStyle: { color: CHART_TEXT_MUTED, fontSize: 11 },
+      top: 0,
+      right: 0,
+      icon: 'roundRect',
+      itemWidth: 10,
+      itemHeight: 8,
+    },
+    tooltip: {
+      trigger: 'axis',
+      ...tooltipStyle(),
+      formatter: (raw: unknown) => {
+        const list = (Array.isArray(raw) ? raw : [raw]) as Array<{
+          axisValue: string | number;
+          seriesName: string;
+          value: [string, number];
+        }>;
+        const first = list[0];
+        if (!first) return '';
+        const stamp = new Date(first.axisValue as string);
+        const hit = payload.points.find((p) => p.ts === first.axisValue);
+        const rows = [
+          `时间：${stamp.toLocaleString('zh-CN', { hour12: false })}`,
+          `分数：${Number(first.value[1]).toFixed(6)}`,
+          `判定：${hit?.is_anomaly ? '异常' : '正常'}`,
+        ];
+        if (hit?.label_type) rows.push(`归因：${ANOMALY_META[hit.label_type]?.label ?? hit.label_type}`);
+        return rows.join('<br/>');
+      },
+    },
+    xAxis: {
+      type: 'time',
+      ...axisStyle(),
+      axisLabel: {
+        color: CHART_TEXT_MUTED,
+        fontSize: 10,
+        formatter: (value: number) => {
+          const d = new Date(value);
+          const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+          return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        },
+      },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 1,
+      ...axisStyle(),
+      axisLabel: { color: CHART_TEXT_MUTED, fontSize: 11 },
+    },
+    series: [
+      {
+        name: '异常分数',
+        type: 'line',
+        showSymbol: false,
+        sampling: 'lttb',
+        lineStyle: { width: 1.6, color: '#38bdf8' },
+        itemStyle: { color: '#38bdf8' },
+        // 不用 areaStyle：尖峰段一冲顶，面积填充会把下方整个区域涂实，
+        // 既是视觉噪音，又会盖住 markArea 的真值色块与红色散点（实测踩到）。
+        data: line,
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color: '#f59e0b', type: 'dashed', width: 1 },
+          label: {
+            formatter: `判定阈值 ${payload.threshold.toFixed(4)}`,
+            color: '#f59e0b',
+            fontSize: 10,
+            position: 'insideEndTop',
+          },
+          data: [{ yAxis: payload.threshold }],
+        },
+        markArea: {
+          silent: true,
+          data: markAreaData,
+        },
+      },
+      {
+        name: '判为异常',
+        type: 'scatter',
+        symbolSize: 3,
+        itemStyle: { color: '#ef4444', opacity: 0.85 },
+        data: flagged,
+        z: 5,
       },
     ],
     textStyle: { color: CHART_TEXT },

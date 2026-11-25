@@ -224,3 +224,109 @@ export interface AnomalyItem {
   ended_at: string | null;
   params: Record<string, unknown> | null;
 }
+
+/* ------------------------------------------------------------------ */
+/* 第 4 阶段：AI 模型（/ml/* 接口，spec_phase4 §6.1）                   */
+/* 页面上每个数字都必须来自这里的某个字段，不许有写死的指标。          */
+/* ------------------------------------------------------------------ */
+
+/** 四个基线模型里的一项。is_primary 标出当前线上用的那个。 */
+export interface ModelBaseline {
+  key: string;
+  label: string;
+  pr_auc: number | null;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  threshold: number | null;
+  detection_rate: number | null;
+  false_alarms_per_device_hour: number | null;
+  is_primary: boolean;
+}
+
+/** 主模型在离线测试集上的指标。test_rows / test_positives 是每张指标卡的角标来源。 */
+export interface ModelMetrics {
+  pr_auc: number | null;
+  f1_macro: number | null;
+  precision: number | null;
+  recall: number | null;
+  roc_auc: number | null;
+  detection_rate: number | null;
+  intervals_detected: number | null;
+  intervals_with_rows: number | null;
+  median_delay_seconds: number | null;
+  false_alarms_per_device_hour: number | null;
+  test_rows: number;
+  test_positives: number;
+}
+
+export interface ModelInfo {
+  loaded: boolean;
+  degraded_reason: string | null;
+  model_id: string | null;
+  algorithm: string;
+  trained_at: string | null;
+  git_commit: string | null;
+  schema_hash: string | null;
+  schema_match: boolean;
+  feature_count: number;
+  dataset_rows: number | null;
+  dataset_positive_rows: number | null;
+  positive_rate: number | null;
+  threshold: number | null;
+  type_labels: string[];
+  top_features: Array<{ name: string; importance: number }>;
+  baselines: ModelBaseline[];
+  /** loaded=false 时为 null —— 前端据此走降级分支，不许显示 0 */
+  metrics: ModelMetrics | null;
+  artifacts_dir: string;
+}
+
+export interface ConfusionPayload {
+  model_id: string;
+  /** [[TN, FP], [FN, TP]]，行是真实标签，列是预测标签 */
+  matrix: number[][];
+  labels: string[];
+  threshold: number;
+  pr_auc: number | null;
+  roc_auc: number | null;
+  test_rows: number;
+  test_positives: number;
+  note: string;
+}
+
+export interface ScorePoint {
+  ts: string;
+  score: number;
+  is_anomaly: boolean;
+  label_type: string | null;
+}
+
+export interface ScoreInterval {
+  id: number;
+  anomaly_type: string;
+  started_at: string;
+  ended_at: string;
+}
+
+export interface ScorePayload {
+  device_id: string;
+  start: string;
+  end: string;
+  model_id: string;
+  threshold: number;
+  generated_at: string;
+  warmup_rows: number;
+  warmup_available: boolean;
+  raw_count: number;
+  downsample_step: number;
+  count: number;
+  points: ScorePoint[];
+  summary: {
+    predicted_rows: number;
+    predicted_rate: number;
+    max_score: number | null;
+    mean_score: number | null;
+  };
+  intervals: ScoreInterval[];
+}

@@ -1389,6 +1389,11 @@ Invoke-RestMethod -Method Patch "http://localhost:8000/api/v1/alarms/$id2/resolv
 
 以上 13 项全绿，第 2 阶段视为完成。
 
+> **2026-11-24 补注（不影响本节任何判据）**：7.3 里「8 表 11 索引」是第 2 阶段**当时**的期望值。
+> 第 4 阶段 4.2 批新增 `model_versions` / `anomaly_scores` 两张表（见 `docs/spec_phase4.md` §6）后，
+> `schema.sql` 实际是 **10 表 15 索引**，`reset.sql` 也同步删 10 张表。今天重跑 7.3，
+> 数量请按 10 / 15 判，其余判据（`schema.sql` 内 `DROP` 计数为 0）不变。
+
 ## 8. 明确不做（第 2 阶段范围外）
 
 ### 8.1 禁止实现的模块

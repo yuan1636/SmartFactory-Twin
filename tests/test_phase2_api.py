@@ -265,3 +265,38 @@ def test_resolve_alarm_follows_g10_two_branches(client, purge):
     assert second["device_status"] == "RUNNING"
 
     purge(device_id, window=(lo, hi))
+
+
+# --------------------------------------------------------------------------- #
+# 增量扫描的回退窗（2026-11-25 修的真实缺陷）
+# --------------------------------------------------------------------------- #
+def test_scan_floor_rewinds_cursor():
+    """扫描下界必须比游标更早，否则"早开始、晚可见"的事务会被永久跳过。
+
+    缺陷现场：`inserted_at` 是事务开始时间，并发写入时先开始的事务可能后提交。
+    若扫描恰好在两者之间跑过，游标被推到较晚的 inserted_at，较早那条再用
+    `inserted_at >= 游标` 就永远查不到。实测后果：POST 的单条 94.5℃ 遥测没有
+    生成告警，重启后端（游标重置为回看 600 秒）才补判出来。
+    """
+    from app.services.alarm_service import _CURSOR_OVERLAP, scan_floor
+
+    cursor = datetime(2026, 11, 25, 2, 0, 0, tzinfo=UTC)
+    floor = scan_floor(cursor)
+    assert floor < cursor, "扫描下界没有回退，并发写入会被漏判"
+    assert (cursor - floor) == _CURSOR_OVERLAP
+
+
+def test_scan_overlap_does_not_defeat_cooldown():
+    """回退窗必须明显小于告警冷却窗，否则重复扫描会把冷却失效掉。
+
+    冷却 5 分钟，回退 30 秒：同一批数据最多被重复看 30 秒，落到冷却窗口里被挡掉。
+    如果哪天有人把回退窗调到比冷却窗还大，这个断言会先失败。
+    """
+    from app.config import settings
+    from app.services.alarm_service import _CURSOR_OVERLAP
+
+    cooldown = timedelta(minutes=settings.alarm_cooldown_minutes)
+    assert _CURSOR_OVERLAP < cooldown / 4, (
+        f"回退窗 {_CURSOR_OVERLAP} 相对冷却窗 {cooldown} 太大，"
+        "重复扫描可能绕过冷却重复写告警"
+    )

@@ -174,3 +174,61 @@ CREATE TABLE IF NOT EXISTS anomaly_injection (
 );
 CREATE INDEX IF NOT EXISTS idx_anomaly_device_time ON anomaly_injection (device_id, started_at);
 COMMENT ON TABLE anomaly_injection IS '异常注入真值表，第 4 阶段模型评估的对照标签，本阶段只写不用';
+
+-- ---------------------------------------------------------------------------
+-- 2.9 model_versions（模型版本表，第 4 阶段 G-07）
+--
+-- 为什么要有这张表：页面上每个数字都必须能追到「哪个模型的哪次训练」。
+-- metrics 整块存 JSONB，因为不同任务的指标不同（异常检测看 PR-AUC，
+-- 产量预测看 MAPE），做成列会不断加列且大量 NULL。
+--
+-- is_active 用部分唯一索引约束：同一个 task 只能有一个生效版本，
+-- 避免「两个模型都说是当前模型」这种无法回答的问题。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS model_versions (
+    id             BIGSERIAL     PRIMARY KEY,
+    model_id       VARCHAR(64)   NOT NULL UNIQUE,
+    task           VARCHAR(32)   NOT NULL
+                   CHECK (task IN ('anomaly_binary','anomaly_type','risk_score','production_forecast')),
+    algorithm      VARCHAR(32)   NOT NULL,
+    schema_hash    VARCHAR(32)   NOT NULL,
+    trained_at     TIMESTAMPTZ   NOT NULL,
+    dataset_rows   BIGINT        NULL,
+    metrics        JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    artifact_path  VARCHAR(255)  NULL,
+    is_active      BOOLEAN       NOT NULL DEFAULT false,
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_model_active_task
+    ON model_versions (task) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_model_trained_at ON model_versions (trained_at DESC);
+COMMENT ON TABLE model_versions IS '模型版本表：每次训练一行，metrics 存完整指标 JSON，is_active 标当前生效版本';
+
+-- ---------------------------------------------------------------------------
+-- 2.10 anomaly_scores（逐行异常分数存档，第 4 阶段 G-07）
+--
+-- 用途是**离线存档**，不是前端缓存的来源。`/ml/anomaly/scores` 接口实时推理，
+-- 保证页面反映的是当前模型 + 当前数据；本表由 ml/anomaly_detection/score_window.py
+-- 批量写入，供论文复现、D 块风险打分与事后追溯。
+--
+-- 主键含 model_id：换模型后可保留旧模型的分数做对比，不会被覆盖。
+-- 不加到 anomaly_injection 的外键：注入记录会被清理，分数存档要能独立存在。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS anomaly_scores (
+    device_id   VARCHAR(16)  NOT NULL,
+    ts          TIMESTAMPTZ  NOT NULL,
+    model_id    VARCHAR(64)  NOT NULL,
+    score       REAL         NOT NULL,
+    is_anomaly  BOOLEAN      NOT NULL,
+    label_type  VARCHAR(24)  NULL,
+    interval_id BIGINT       NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (device_id, ts, model_id),
+    CONSTRAINT fk_scores_device FOREIGN KEY (device_id)
+        REFERENCES devices (device_id) ON DELETE CASCADE,
+    CONSTRAINT fk_scores_model FOREIGN KEY (model_id)
+        REFERENCES model_versions (model_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_scores_model_ts ON anomaly_scores (model_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_scores_device_ts ON anomaly_scores (device_id, ts DESC);
+COMMENT ON TABLE anomaly_scores IS '逐行异常分数存档（离线批量写入），前端曲线走 /ml/anomaly/scores 实时推理';

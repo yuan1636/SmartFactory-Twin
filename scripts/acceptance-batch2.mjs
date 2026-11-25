@@ -10,6 +10,87 @@
 
 import { API, check, connect, results, sleep, summarize } from './lib/cdp.mjs';
 
+/**
+ * 造一条未解除告警，供「解除」流程验收。
+ *
+ * 走正常 API 而不是直接改库：要验的是"扫描任务真的把超温判成告警"这条链路。
+ * 两个细节来自 docs/acceptance_phase3.md 5.1 的踩坑记录：
+ * - 时间戳必须带毫秒，否则与模拟器的整 2 秒栅格撞主键，返回 409；
+ * - 同设备同类型有 5 分钟冷却，撞上会被静默跳过，所以按设备顺序逐个试。
+ *
+ * 副作用：会在库里留下一条 95℃ 的遥测，AI 页的分数曲线会把它算成一个异常点。
+ * 这是可接受的——它是真实的超温读数，模型判它异常本来就没错。
+ */
+async function injectOpenAlarm() {
+  // 先排除 5 分钟内已经报过温度告警的设备：同设备同类型有 5 分钟冷却（G-09），
+  // 撞上冷却期这次注入会被静默跳过，表现出来就是"等了半天没告警"。
+  const recent = await fetch(`${API}/alarms?page=1&page_size=200`).then((r) => r.json());
+  const now = Date.now();
+  const cooling = new Set(
+    (recent.items ?? [])
+      .filter(
+        (a) =>
+          a.alarm_type === 'TEMPERATURE' &&
+          now - new Date(a.detected_at).getTime() < 5 * 60 * 1000,
+      )
+      .map((a) => a.device_id),
+  );
+  const target = ['CNC-01', 'CNC-04', 'CNC-02', 'CNC-03', 'INSP-01', 'ROB-02'].find(
+    (deviceId) => !cooling.has(deviceId),
+  );
+  if (!target) {
+    console.log('  候选设备全部处于 5 分钟冷却中，跳过注入');
+    return false;
+  }
+
+  // 只让温度超限，其余指标取该设备正常区间的中值。
+  // 不能把振动/电流写死（原来的 2.0 / 9.5 是按 CNC 的阈值定的）：INSP-01 的振动
+  // 严重阈值只有 1.88、电流 3.75，一次注入会同时生成 TEMPERATURE / VIBRATION /
+  // CURRENT 三条告警（2026-11-25 实测），"解除"验收就变成了三选一，语义错乱。
+  const detail = await fetch(`${API}/devices/${target}`).then((r) => r.json());
+  const range = detail.metrics_normal_range ?? {};
+  const middle = (metric, fallback) => {
+    const bounds = range[metric];
+    return bounds ? Number(((bounds.min + bounds.max) / 2).toFixed(2)) : fallback;
+  };
+  // 温度取该设备正常上限 ×1.35：既超过 critical（×1.25），又不至于离谱
+  const temperature = Number((((range.temperature?.max ?? 70) * 1.35)).toFixed(1));
+
+  const ts = new Date(Date.now() - 7500).toISOString();
+  const response = await fetch(`${API}/telemetry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      device_id: target,
+      ts,
+      temperature,
+      vibration: middle('vibration', 2.0),
+      current: middle('current', 8.0),
+      speed: middle('speed', 1500),
+      running_status: 'RUNNING',
+    }),
+  });
+  if (!response.ok) {
+    console.log(`  注入失败：HTTP ${response.status}（${target} @ ${ts}）`);
+    return false;
+  }
+
+  // 只等这一台，不再换设备重试。
+  // 原实现是"15 秒没等到告警就换下一台接着注入"，实测一次运行会往 4 台设备各写
+  // 一条 95℃（2026-11-25 复现），事后要逐条清理，而且 AI 页会多出一串假尖峰。
+  // 扫描周期 5 秒，25 秒等不到说明扫描任务有问题，该报错而不是继续污染数据。
+  for (let i = 0; i < 25; i += 1) {
+    await sleep(1000);
+    const open = await fetch(`${API}/alarms?resolved=false&page=1&page_size=1`).then((r) => r.json());
+    if (open.total > 0) {
+      console.log(`  已注入未解除告警：${target} 温度 ${temperature}℃ @ ${ts}`);
+      return true;
+    }
+  }
+  console.log(`  注入到 ${target} 后 25 秒仍未生成告警，请检查后端告警扫描任务`);
+  return false;
+}
+
 async function checkAlerts(s) {
   await s.goto('/alerts');
   const ready = await s.waitFor('document.querySelector(".table") || document.querySelector(".state-block")', 10000);
@@ -23,12 +104,30 @@ async function checkAlerts(s) {
   `);
   console.log('  告警 KPI：', JSON.stringify(kpi));
 
+  // 不能按索引取「第二张表」：告警为空时列表渲染的是空态，第一张 .table 其实是维护记录，
+  // tables[1] 直接 undefined（2026-11-25 实测：未解除告警 0 条时误报"没有第二张表"）。
+  // 按卡片标题定位才稳。
+  const MAINT_CARD = `[...document.querySelectorAll('.card')]
+    .find((c) => c.querySelector('.card__title')?.textContent.trim() === '维护记录')`;
+  await s.waitFor(`(() => { const c = ${MAINT_CARD}; return Boolean(c && c.querySelector('.table')); })()`, 12000);
   const maintRows = await s.evaluate(`(() => {
-    const tables = document.querySelectorAll('.table');
-    const second = tables[1];
-    return second ? second.querySelectorAll('tbody tr').length : -1;
+    const card = ${MAINT_CARD};
+    if (!card) return -1;
+    const table = card.querySelector('.table');
+    return table ? table.querySelectorAll('tbody tr').length : 0;
   })()`);
-  check('维护记录表有数据', maintRows > 0, maintRows < 0 ? '页面上没有第二张表' : `${maintRows} 行`);
+  check('维护记录表有数据', maintRows > 0, maintRows < 0 ? '页面上没有维护记录卡片' : `${maintRows} 行`);
+
+  // 没有未解除告警时先造一条：否则这条断言永远依赖"上一次运行留下的数据"。
+  // 注入方式与 docs/acceptance_phase3.md 5.1 一致（时间戳带毫秒，避开模拟器的整 2 秒栅格）。
+  let armed = await s.evaluate('document.querySelectorAll(".table button.btn--primary").length > 0');
+  if (!armed) {
+    armed = await injectOpenAlarm();
+    if (armed) {
+      await s.goto('/alerts');
+      await s.waitFor('document.querySelectorAll(".table button.btn--primary").length > 0', 15000);
+    }
+  }
 
   const clicked = await s.evaluate(`(() => {
     const btn = document.querySelector('.table button.btn--primary');
@@ -38,10 +137,10 @@ async function checkAlerts(s) {
   })()`);
 
   if (!clicked) {
-    check('解除按钮存在', false, '当前没有未解除告警可点（需先注入告警）');
+    check('解除按钮存在', false, '注入告警后仍没有解除按钮（后端扫描任务可能没在跑）');
     return;
   }
-  check('解除按钮存在', true);
+  check('解除按钮存在', true, armed ? '现场注入并等待告警落库' : '');
 
   await sleep(1500);
   const toasts = await s.evaluate(`Array.from(document.querySelectorAll('.toast')).map((t) => t.textContent.trim())`);
@@ -55,6 +154,14 @@ async function checkProduction(s) {
   await s.goto('/production');
   const ready = await s.waitFor('document.querySelectorAll(".metric-card").length >= 4');
   check('生产页 KPI 渲染', ready);
+
+  // 卡片先渲染、数据后到，中间态是「—／等待数据」。只等卡片数量会在数据到达前就断言，
+  // 表现为"页面 — / 接口 96.6%"这种假失败（2026-11-25 实测复现）。要等值真的填上。
+  await s.waitFor(
+    `[...document.querySelectorAll('.metric-card__value')]
+       .every((el) => el.textContent.trim() !== '' && !el.textContent.includes('—'))`,
+    15000,
+  );
 
   const cards = await s.evaluate(`
     Array.from(document.querySelectorAll('.metric-card')).map((c) => ({
@@ -107,16 +214,22 @@ async function checkAi(s) {
 
   const body = await s.evaluate('document.body.innerText');
   const notice = await s.evaluate('document.querySelector(".notice-bar")?.innerText ?? ""');
+  // 第 4 阶段 4.2 起这一页有模型了，第 3 阶段的「不含模型推理」断言已作废，
+  // 换成等价的合规要求：必须写明指标来源（离线测试集）与注入密度的演示性质。
   check(
-    '10.2-12 声明条说明「不含模型推理」',
-    /本阶段不含任何模型推理/.test(notice),
-    notice.slice(0, 40).replace(/\s+/g, ' '),
+    '10.2-12 声明条写明指标来源与演示性质',
+    /离线测试集结果/.test(notice) && /注入密度/.test(notice) && /演示设定/.test(notice),
+    notice.slice(0, 48).replace(/\s+/g, ' '),
   );
 
   const banned = /准确率|故障概率|预计故障|模型置信度|预测准确/.exec(body);
   check('10.2-12 页面无编造的模型指标', banned === null, banned ? `出现「${banned[0]}」` : '未发现');
 
-  check('10.2-12 预留虚线框存在', await s.evaluate('Boolean(document.querySelector(".reserved-box"))'));
+  // 预留虚线框在第 4 阶段已被真实模型区取代，断言随之换成"模型区存在"。
+  check(
+    '10.2-12 模型输出区存在（原预留框已替换）',
+    await s.evaluate('Boolean(document.querySelector("[data-ml-state]"))'),
+  );
 
   const canvases = await s.evaluate('document.querySelectorAll("canvas").length');
   check('AI 页两张图已绘制', canvases >= 2, `${canvases} 个 canvas`);

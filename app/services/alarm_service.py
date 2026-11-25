@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 # 扫描游标：只在进程内维护，重启后按 lookback 回看一段（见 settings）
 _cursor: datetime | None = None
 
+# 增量扫描的回退窗。为什么不能用单点游标：
+# `inserted_at` 是**事务开始时间**，不是提交时间。并发写入时，先开始的事务可能
+# 后提交，此时它的 inserted_at 比已经推进的游标更早，用 `inserted_at >= 游标` 就把它
+# 永久跳过——不会再有任何一次扫描看到它。
+#
+# 2026-11-25 实测复现：POST 单条遥测（事务早）与模拟器批量写（事务晚）并发，
+# CNC-01 的 94.5℃ 记录写进了库却没有生成告警，直到重启后端（游标重置为回看 600 秒）
+# 才补判出那条 CRITICAL。验收脚本因此误报"注入告警后仍没有解除按钮"。
+#
+# 回退窗取 30 秒：模拟器每 2 秒一批，30 秒足够覆盖任何正常的事务延迟。
+# 回退带来的重复扫描不会重复写告警——同一设备同一类型 5 分钟冷却会挡掉。
+_CURSOR_OVERLAP = timedelta(seconds=30)
+
+
+def scan_floor(cursor: datetime) -> datetime:
+    """增量扫描的时间下界 = 游标回退一个重叠窗（见 `_CURSOR_OVERLAP` 的说明）。"""
+    return cursor - _CURSOR_OVERLAP
+
 
 def reset_cursor() -> None:
     """测试/排障用：把扫描游标复位成"回到起点"。"""
@@ -66,7 +84,9 @@ def scan_new_telemetry() -> list[dict]:
         if _cursor is None:
             # 首次运行回看一段时间：覆盖"后端比模拟器晚启动"与回填刚写完的场景
             _cursor = now - timedelta(seconds=settings.alarm_scan_initial_lookback_seconds)
-        scan_from = _cursor
+        scan_from = scan_floor(_cursor)
+        # next_cursor 仍从游标本身起算：回退只影响"看多远"，不该让游标倒退，
+        # 否则每轮都把游标往回拉，扫描范围会无限扩大。
         next_cursor = _cursor
 
         for dev in devices_config.devices:

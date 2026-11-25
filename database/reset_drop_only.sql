@@ -5,11 +5,14 @@
 
 SET TIME ZONE 'UTC';
 
+-- anomaly_scores 同时指向 devices 与 model_versions，必须排在这两张之前
+DROP TABLE IF EXISTS anomaly_scores      CASCADE;
 DROP TABLE IF EXISTS anomaly_injection   CASCADE;
 DROP TABLE IF EXISTS maintenance_records CASCADE;
 DROP TABLE IF EXISTS alarms              CASCADE;
 DROP TABLE IF EXISTS production_orders   CASCADE;
 DROP TABLE IF EXISTS device_telemetry    CASCADE;
+DROP TABLE IF EXISTS model_versions      CASCADE;
 DROP TABLE IF EXISTS devices             CASCADE;
 DROP TABLE IF EXISTS production_lines    CASCADE;
 DROP TABLE IF EXISTS workshops           CASCADE;

@@ -4,12 +4,14 @@
  */
 
 import * as echarts from 'echarts/core';
-import { BarChart, CustomChart, LineChart } from 'echarts/charts';
+import { BarChart, CustomChart, HeatmapChart, LineChart, ScatterChart } from 'echarts/charts';
 import {
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
   MarkLineComponent,
   TooltipComponent,
+  VisualMapComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 
@@ -18,10 +20,16 @@ echarts.use([
   BarChart,
   // 甘特条没有现成图表类型，用 custom 系列画矩形（AI 页真值时间轴）
   CustomChart,
+  // AI 页：混淆矩阵用 heatmap，异常点用 scatter 叠在分数曲线上
+  HeatmapChart,
+  ScatterChart,
+  VisualMapComponent,
   GridComponent,
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,
+  // 分数曲线上要标出注入真值的时间段，markArea 是独立组件，不注册会静默不画
+  MarkAreaComponent,
   CanvasRenderer,
 ]);
 

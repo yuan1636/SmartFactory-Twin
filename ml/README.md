@@ -1,6 +1,6 @@
 # ml/ —— 第 4 阶段 AI 模型
 
-施工依据 `docs/spec_phase4.md` v1.0，验收记录 `docs/acceptance_phase4.md`。
+施工依据 `docs/spec_phase4.md` v1.1，验收记录 `docs/acceptance_phase4.md`。
 
 **全部数据来自模拟器注入，指标只对模拟器成立，不代表真实工厂。**
 
@@ -9,14 +9,16 @@
 ```
 common/
   db.py        只读数据库访问（连接串与后端同源）
-  features.py  78 维特征工程，训练与推理共用的唯一实现
+  features.py  78 维特征工程，训练与推理共用的唯一实现（schema 指纹的来源）
   split.py     时间切分 / 跨段区间剔除 / 随机切分对照
   metrics.py   PR-AUC、宏 F1、区间检出率、每设备每小时误报
 anomaly_detection/
-  build_dataset.py  导出特征矩阵与标签（逐设备处理，控制内存）
-  train.py          四个对照模型 + 三分类归因 + 随机切分对照
-  evaluate.py       22 项一致性自检 + 生成 Markdown 摘要
-evaluation/reports/ 报告（JSON 机器可读，MD 可粘贴进验收文档），进 git
+  build_dataset.py   导出特征矩阵与标签（逐设备处理，控制内存）
+  train.py           四个对照模型 + 三分类归因 + 随机切分对照
+  evaluate.py        22 项一致性自检 + 生成 Markdown 摘要
+  register_model.py  把 artifact 登记进 model_versions 表（4.2 批新增）
+  score_window.py    批量打分写入 anomaly_scores 表（4.2 批新增）
+evaluation/reports/  报告（JSON 机器可读，MD 可粘贴进验收文档），进 git
 ```
 
 ## 跑法
@@ -26,9 +28,31 @@ pip install -r requirements-ml.txt
 python -m ml.anomaly_detection.build_dataset   # 约 33 秒
 python -m ml.anomaly_detection.train           # 约 65 秒
 python -m ml.anomaly_detection.evaluate        # 自检 22 项
+
+# 以下两条只在需要重建数据库里的存档时才跑（页面不读这两张表）
+python -m ml.anomaly_detection.register_model            # → model_versions（同 task 只留一行 is_active）
+python -m ml.anomaly_detection.score_window --hours 168  # → anomaly_scores（约 2.5 万行 / 1 分钟）
+# --hours 默认 1；--device CNC-01 只打一台；--end 固定窗口终点可复现同一批结果
 ```
 
 模型文件写 `artifacts/`（不进 git，可重建）。报告写 `ml/evaluation/reports/`（进 git）。
+
+## 推理侧在哪
+
+**不在 ml/ 里**，在 `app/services/ml_anomaly.py`。原因：特征抽取与预热窗只能有一份实现，
+如果 ml/ 再写一遍，训练与推理就会各自跑偏而没人发现。`score_window.py` 也是 import 后端那个函数，
+不在 ml/ 下重写。
+
+三者的分工（偏差 D-18 / D-19）：
+
+| 位置 | 职责 |
+|---|---|
+| `artifacts/` 里的文件 | **推理的唯一真相源**：模型、阈值、归一化基线、schema 指纹 |
+| `model_versions` 表 | 历史存档：哪次训练、什么指标、artifact 放哪 |
+| `anomaly_scores` 表 | 历史存档：离线批量打分的结果 |
+| `/ml/anomaly/scores` 接口 | 页面实际取数的地方，**实时推理**，不查上面两张表 |
+
+反过来做（让页面读 `anomaly_scores`）会出现"表里写着模型 A、实际跑的是模型 B"这种无法察觉的错位。
 
 ## 三条不能踩的线
 

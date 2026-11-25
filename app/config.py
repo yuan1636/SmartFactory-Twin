@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     # WebSocket 快照推送间隔（G-13）
     ws_snapshot_interval_seconds: int = 1
 
+    # ---- 第 4 阶段：模型推理（spec_phase4 G-01）----
+    # ml_enabled=False 时强制走降级态（阈值规则），用于验证降级路径与演示"模型不可用"。
+    ml_enabled: bool = True
+    # artifact 目录。默认仓库根的 artifacts/（训练脚本的输出位置）。
+    # 用字符串而不是 Path：pydantic-settings 能从环境变量直接覆盖。
+    ml_artifacts_dir: str = str(BASE_DIR / "artifacts")
+    # 推理预热秒数：特征里有 150 点（300 秒）的长窗口，窗口不足时开头几行分数偏低。
+    ml_warmup_seconds: int = 300
+    # 单次推理最多处理多少行原始读数（24 小时单设备 = 43200 行）。
+    # 超过则 400，而不是悄悄抽稀——抽稀会改变"点数窗口"的物理含义，让特征失真。
+    ml_max_rows: int = 50000
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

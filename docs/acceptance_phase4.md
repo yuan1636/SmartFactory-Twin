@@ -1,9 +1,10 @@
 # 第 4 阶段验收记录
 
 ```yaml
-规格: docs/spec_phase4.md v1.0（已冻结，含偏差 D-11 ~ D-17）
-记录: 2026-11-24，按批记录，每批三列（结论 / 命令 / 实际输出）
-范围: 4.1 批（异常检测：回填 → 数据集 → 四模型 → 报告）
+规格: docs/spec_phase4.md v1.1（v1.0 冻结版 + 4.2 批施工细节，含偏差 D-11 ~ D-25）
+记录: 2026-11-24 ~ 2026-11-25，按批记录，每批三列（结论 / 命令 / 实际输出）
+范围: 4.1 批（异常检测：回填 → 数据集 → 四模型 → 报告，第 1~7 节）
+      4.2 批（模型接入后端 + /ml/* 接口 + AI 页落地，第 8 节）
 ```
 
 ## 0. 本文件怎么用
@@ -360,3 +361,282 @@ FAIL  训练段与验证段时间不重叠  · 2026-11-22 11:12:56 ≤ 2026-11-2
 | SHAP 逐样本解释 | **未做**（L-10，作者已确认留 P1） | 后续 |
 | TimescaleDB / Kafka / 故障风险 / 产量预测 | **未做** | 4.3 / 4.4 / 4.5 批 |
 | 真实数据集上的泛化能力 | **未验证**，且本批无法验证 | 论文可选加分项（L-09） |
+
+---
+
+# 第 8 节：4.2 批（模型接入后端 + AI 页落地）
+
+## 8.0 本批要证明什么
+
+| # | 结论 | 怎么证明 |
+|---|---|---|
+| 1 | 模型真的被后端加载并用于推理 | `model-info` 报 `loaded=true` + `schema_match=true`；`scores` 接口实时算出非零分数 |
+| 2 | **页面上的每个数字都能追到一次接口返回** | `acceptance-ai.mjs` 逐个比对 DOM 里的数字与接口 JSON，含"同窗重放" |
+| 3 | 模型不可用时系统不残缺 | Fetch 域拦截 `/ml/model-info` 返回 `loaded:false`，验证降级提示、无 0、无白屏、其余区块照常 |
+| 4 | 没改坏第 2、3 阶段 | `pytest` 24 项 + `acceptance-batch2.mjs` 24 项 + `acceptance-motion.mjs` 17 项全过 |
+| 5 | 两张新表有真实数据、有明确用途 | `model_versions` 1 行（生效版本）；`anomaly_scores` 24,851 行（4.2 批 24,659 + 复核时追加 192） |
+
+跑法（前后端与 CDP Chrome 都要在）：
+
+```text
+node scripts\acceptance-ai.mjs         # 42 项，需 dev 模式（依赖 data-ml-* 标记）
+node scripts\acceptance-batch2.mjs     # 24 项，无回归 + 两条断言已按本批更新
+node scripts\acceptance-motion.mjs     # 17 项，三维产线无回归
+```
+
+## 8.1 交付物
+
+```text
+app/services/ml_anomaly.py            进程内 lazy 加载、schema 校验、失败降级、带预热窗推理
+app/routers/ml.py                     三个接口：model-info / anomaly/confusion / anomaly/scores
+database/schema.sql                   +2.9 model_versions、+2.10 anomaly_scores（CREATE IF NOT EXISTS，可重跑）
+ml/anomaly_detection/register_model.py 把训练产物登记进 model_versions（脚本登记，接口不读表）
+ml/anomaly_detection/score_window.py   批量打分写入 anomaly_scores（离线存档，前端不读）
+tests/test_ml_api.py                  14 项：接口↔artifact 一致、参数保护、三条降级路径
+scripts/acceptance-ai.mjs             42 项页面级断言（含降级态拦截）
+frontend/src/charts/options.ts        confusionHeatmapOption / modelCompareOption / scoreCurveOption
+frontend/src/pages/AiInsight.tsx      灰色虚线框 → 模型输出区；原有真值区块保留
+```
+
+## 8.2 三个接口的实测返回
+
+```text
+GET /api/v1/ml/model-info
+{"loaded": true, "degraded_reason": null, "model_id": "anomaly-20261124-2143-9ab70b7",
+ "trained_at": "2026-11-24T21:43:45", "schema_hash": "15afd2a011823561", "schema_match": true,
+ "feature_count": 78, "dataset_rows": 848112, "positive_rate": 0.016821, "threshold": 0.007866,
+ "metrics": {"pr_auc": 0.9859, "f1_macro": 0.9431, "precision": 0.9063, "recall": 0.983,
+             "roc_auc": 0.9943, "detection_rate": 0.9758, "intervals_detected": 121,
+             "intervals_with_rows": 124, "median_delay_seconds": 4.0,
+             "false_alarms_per_device_hour": 0.625, "test_rows": 127206, "test_positives": 2175},
+ "baselines": [threshold_rule, logistic_regression, isolation_forest, xgboost]}
+
+GET /api/v1/ml/anomaly/confusion
+{"matrix": [[124810, 221], [37, 2138]], "labels": ["正常","异常"], "threshold": 0.007866,
+ "test_rows": 127206, "test_positives": 2175,
+ "note": "离线测试集（按时间切分的最后 15%）结果，不是页面上那台设备的实时表现"}
+```
+
+分数接口的性能（`CNC-01`，含 300 秒预热段）：
+
+| 窗口 | 耗时 | 原始点数 | 返回点数 | 降采样 |
+|---|---|---|---|---|
+| 1 小时 | **229 ms** | 1,800 | 1,800 | ×1 |
+| 6 小时 | 1,196 ms | 10,800 | 3,600 | ×3 |
+| 24 小时 | 2,021 ms | 43,206 | 4,801 | ×9 |
+
+降采样**按区间取峰值**（`max(score)` + `any(is_anomaly)`），不是每 step 取一条——
+后者会把 40 秒的 VIB_SPIKE 整段跳过，曲线上看起来"什么都没发生"，而模型其实抓到了。
+
+## 8.3 AI 页 42 项验收（`output/logs/phase4_ai_acceptance.log` 原文）
+
+```text
+=== 6.2 AI 页：模型输出区 ===
+PASS  6.2 模型区处于 loaded 态
+PASS  6.2 「预留，本阶段不实现」已消失
+PASS  6.2 「本阶段不含任何模型推理」已消失
+PASS  6.2 声明条写明注入密度为演示设定
+PASS  6.2 声明条写明指标来自离线测试集
+PASS  6.2 面包屑已同步（不再是「仅展示真值」）
+PASS  6.1 接口报告模型已加载  · model_id=anomaly-20261124-2143-9ab70b7
+PASS  6.2 状态条 model_id 与接口一致  · 页面「anomaly-20261124-2143-9ab70b7」/ 接口「anomaly-20261124-2143-9ab70b7」
+PASS  6.2 状态条 threshold 与接口一致  · 页面「0.0079」/ 接口「0.0079」
+PASS  6.2 状态条 schema_hash 与接口一致  · 页面「15afd2a011823561」/ 接口「15afd2a011823561」
+PASS  6.2 指标卡 pr_auc 与接口一致  · 页面「0.9859」/ 接口「0.9859」
+PASS  6.2 指标卡 recall 与接口一致  · 页面「98.30%」/ 接口「98.30%」
+PASS  6.2 指标卡 detection_rate 与接口一致  · 页面「97.58%」/ 接口「97.58%」
+PASS  6.2 指标卡 false_alarms 与接口一致  · 页面「0.63」/ 接口「0.63」
+PASS  6.2 指标卡标注了测试集规模  · 127206 / 2175
+PASS  6.2 混淆矩阵 TN 与接口一致  · 页面「TN 124,810」
+PASS  6.2 混淆矩阵 FP 与接口一致  · 页面「FP 221」
+PASS  6.2 混淆矩阵 FN 与接口一致  · 页面「FN 37」
+PASS  6.2 混淆矩阵 TP 与接口一致  · 页面「TP 2,138」
+PASS  6.1 混淆矩阵四格之和等于测试集行数  · 127206 行
+PASS  6.2 四模型对比数据齐（4 个基线）  · threshold_rule,logistic_regression,isolation_forest,xgboost
+PASS  6.2 主模型标记唯一且为 XGBoost
+PASS  6.2 四模型对比图已渲染
+PASS  6.2 分数曲线图已渲染
+PASS  6.2 页面暴露了推理时间窗（可重放）  · CNC-01 2026-11-25T01:07:29+00:00 ~ 2026-11-25T02:07:29+00:00
+PASS  6.2 分数曲线点数与同窗重放一致  · 页面「1769」/ 接口「1769」
+PASS  6.2 分数曲线判为异常点数与同窗重放一致  · 页面「217」/ 接口「217」
+PASS  6.2 分数曲线真值区间段数与同窗重放一致  · 页面「1」/ 接口「1」
+PASS  6.2 曲线点数未超上限且未丢原始点  · 1769 / 1769
+PASS  6.2 模型在该窗口内确实判出了异常  · 217 点，最高分 1
+PASS  6.4 异常真值时间轴仍在
+PASS  6.4 真值 vs 阈值告警对照仍在
+PASS  6.4 异常真值列表仍在
+
+=== 6.3 降级态：模型不可用时页面必须还能用 ===
+PASS  6.3 模型不可用时页面切到降级态
+PASS  6.3 降级原因对用户可见
+PASS  6.3 降级时明说告警仍由阈值规则产生
+PASS  6.3 降级时不显示任何模型指标（不许出现 0 或占位数字）
+PASS  6.3 降级时其余区块照常（不白屏）
+PASS  6.3 降级时页面没有抛异常  · 无
+PASS  6.3 解除拦截后自动恢复为 loaded 态  · data-ml-state=loaded
+PASS  6.3 恢复后指标卡重新出现
+PASS  6.2 全程无页面运行时异常  · 无
+截图已保存 output/shot_ai_model.png
+
+合计 42 项，通过 42，失败 0
+```
+
+**「同窗重放」是怎么做的**：页面把本次推理的 `[start, end]` 写进隐藏的
+`[data-ml-window]`，脚本拿同一个窗口再请求一次接口。窗口固定后结果稳定——
+否则两次采样之间模拟器又写了两秒数据，数字必然对不上，那是假失败。
+
+**降级态是真的拦截，不是改代码**：用 CDP 的 `Fetch.enable` 截住 `/ml/model-info`，
+返回 `{loaded:false, degraded_reason:"验收脚本注入…"}`，验证页面切降级、指标卡消失、
+真值区块仍在，然后 `Fetch.disable` 恢复。这比"手动把 artifacts 改名再重启后端"可靠得多。
+
+## 8.4 后端 24 项测试
+
+```text
+python -m pytest tests -q
+24 passed, 1 warning in 36.79s
+```
+
+新增 14 项（`tests/test_ml_api.py`）+ 2 项（扫描游标回退窗），原有 8 项不变。
+
+**重要运行条件**：pytest 会启动自己的 lifespan（含告警扫描），与真实后端同时跑时
+两者会抢写同一批告警，`test_alarm_cooldown_*` 会间歇失败（实测 2026-11-25 出现 2 条而非 1 条）。
+**跑 pytest 前先停后端**，或用独立数据库。这条已写进 README 的验收说明。
+
+## 8.5 无回归
+
+```text
+node scripts/acceptance-batch2.mjs   合计 24 项，通过 24，失败 0   （连跑两次均全过）
+node scripts/acceptance-motion.mjs   合计 17 项，通过 17，失败 0
+cd frontend && npm run test          9 files / 86 tests passed    （+9：三个新图表的 option 断言）
+cd frontend && npm run build         ✓ built in 6.38s，0 error
+```
+
+`acceptance-batch2.mjs` 本轮改了 4 处，全部记录在偏差 D-24 / D-25：两条断言因本批取代了
+第 3 阶段的现实而更新，两处竞态（维护表按索引取、KPI 数据未到就断言）修正。
+
+## 8.6 两张新表的数据
+
+```text
+model_versions：1 行
+  anomaly-20261124-2143-9ab70b7 | anomaly_binary | xgboost | 15afd2a011823561 | is_active=t | 848112
+
+anomaly_scores：24,851 行（其中判为异常 588 行）
+  4.2 批首次写入 24,659 行（09:08 ~ 10:09，14 台设备各 1 小时）
+  复核脚本时又追加 192 行（CNC-01 近 15 分钟窗口，419 行提交里 227 行与已有 (device_id, ts, model_id) 撞主键被跳过）
+```
+
+追加那 192 行是**故意留的**：它同时验证了 `score_window.py` 的 `ON CONFLICT DO NOTHING` 真的生效
+（打印"提交 419 / 实际新增 192 / 跳过重复 227"，三个数能对上），以及脚本可重复执行不会撑大表。
+本次新增的 192 行**全是正常点**——那个窗口里的 23 个异常点此前已经存过，所以异常行数仍是 588。
+这也是为什么本表不写一个死的行数当作"永久事实"——它是随打分窗口增长的存档。
+
+两个脚本的定位已经写在偏差 D-18 / D-19 里，一句话：**接口读 artifact（唯一真相源），
+表存历史与存档**。反过来做就会出现"表说是模型 A、实际跑的是模型 B"且无法判断该信谁。
+
+## 8.7 本批发现并修复的问题（6 个，全部有实测证据）
+
+### ① 告警扫描漏判（第 2 阶段遗留缺陷，偏差 D-23）
+
+**现象**：往 CNC-01 写一条 94.5℃ 的遥测，25 秒内没有生成告警；同一时刻往 INSP-01 写却能生成。
+
+**定位**：重启后端（游标重置为"回看 600 秒"）后，同一条记录立刻被判为 CRITICAL：
+
+```text
+alarm_id 1039 | CNC-01 | TEMPERATURE | CRITICAL | 2026-11-25 10:00:16.408
+```
+
+**根因**：`inserted_at` 是**事务开始时间**，不是提交时间。并发写入时先开始的事务可能后提交，
+此时它的 `inserted_at` 比已经推进的游标更早，`inserted_at >= 游标` 把它永久跳过。
+
+**修复**：`scan_from = _cursor - 30 秒`（`scan_floor()`）。回退带来的重复扫描由 5 分钟冷却挡掉。
+补了 2 条回归测试（回退量正确、回退窗 < 冷却窗 / 4）。
+
+### ② heatmap 缺 visualMap 导致整页白屏（D-20）
+
+```text
+EXC: Uncaught Error: Heatmap must use with visualMap
+     at HeatmapView2.render (echarts_charts.js)
+ERR: The above error occurred in the <ChartCard> component
+→ body.innerText 为空，html 只有 103 字符（React 树已崩）
+```
+
+ECharts 5 的 heatmap 强制要求 visualMap。修法：加隐藏的 visualMap 满足前置条件，
+颜色仍由每格的 itemStyle 按语义给（TN/FP/FN/TP 四种颜色），而不是按数值做色阶。
+
+### ③ 面积填充盖住了真值色块与散点（D-21）
+
+第一版给折线加了 `areaStyle`。尖峰冲顶后，面积填充把下方整个区域涂成一个灰块，
+markArea 的橙色真值区间和红色散点全被压在下面，图上只剩"一个大矩形"。去掉 `areaStyle` 后正常。
+
+### ④ 验收脚本一次往 4 台设备写数据（D-25）
+
+注入值写死了 `vibration=2.0 / current=9.5`（按 CNC 阈值定的）。在 INSP-01 上一次注入
+同时触发三条告警（该设备振动严重阈值只有 1.88）；且"15 秒没等到就换下一台"导致一次运行
+连写 CNC-01/04/02/03 各一条 95℃，事后逐条清理。
+
+修法：温度按 `该设备正常上限 × 1.35` 算，其余指标取正常区间中值；只注入一台，等不到就报失败。
+
+### ⑤ 两处断言竞态（D-24）
+
+- **维护记录表按索引取**：`tables[1]` 假设第一张表一定是告警表。告警为空时列表渲染的是空态，
+  第一张 `.table` 其实是维护表，`tables[1]` 直接 undefined → 误报"页面上没有第二张表"。
+- **生产 KPI 数据未到就断言**：卡片先渲染、数据后到，中间态是「—／等待数据」，
+  结果为"页面 — / 接口 96.6%"这种假失败。
+
+两处都改成按内容定位/等值到位，连跑两次稳定通过。
+
+### ⑥ `reset.sql` 漏掉两张新表
+
+**现象**：新增 `model_versions` / `anomaly_scores` 后，`reset.sql` 和 `reset_drop_only.sql` 里仍只删 8 张表。
+`DROP TABLE devices CASCADE` 只会删掉指向它的外键约束，不会删表本身——于是"清库重建"后
+这两张表成了没有外键约束的孤儿表，`schema.sql` 的 `CREATE TABLE IF NOT EXISTS` 也不会重建它们，
+表结构和当前代码可能悄悄分叉。
+
+**修法**：两个脚本都补上 `DROP TABLE IF EXISTS anomaly_scores`（必须排在 `devices` / `model_versions` 之前，
+它是这两张表的子表）与 `DROP TABLE IF EXISTS model_versions`。
+
+**怎么验证的**（不能拿演示库试，会真清 455 万行）：在同一个容器里建临时库 `sftwin_reset_test`，
+灌 `schema.sql` + `seed.sql` → 往两张新表各插一行 → 执行完整 `reset.sql`：
+
+```text
+DROP TABLE × 10 → SET / CREATE TABLE × 10 / CREATE INDEX × 15，0 ERROR
+表数 10 | 索引数 27 | 车间 2 | 产线 4 | 设备 14 | 模型行 0 | 分数行 0
+```
+
+再连跑一次 `reset.sql`，`grep -icE "error|warning"` 结果为 **0**（幂等）。临时库随后 `DROP DATABASE` 删除，
+主库 `smartfactory` 复核仍为 4,555,663 行遥测 / 719 条告警 / 1 行模型 / 24,659 行分数（均为该次复核时的值），未受影响。
+
+> 附带发现：`model_versions.task` 的 CHECK 只接受 `anomaly_binary` / `anomaly_type` / `risk_score` /
+> `production_forecast` 四个值。写错值会直接 `violates check constraint`，属于预期行为，不是缺陷。
+
+## 8.8 本批明确未做 / 未验证
+
+| 项 | 状态 | 归属 |
+|---|---|---|
+| TimescaleDB 迁移与压缩比实测 | 未做 | 4.3 批 |
+| Kafka 替换 HTTP 直写 | 未做 | 4.4 批 |
+| D 块故障风险打分 / E 块产量预测 | 未做 | 4.5 批 |
+| SHAP 逐样本解释（L-10） | 未做（P1） | 后续 |
+| 模型在生产数据上的泛化 | **无法验证**：数据是模拟器造的，标签是注入真值 | 论文限定条件 |
+| 24 小时窗口的交互流畅度 | **未测真机手感**：接口 2.0s，页面会等一次推理 | 人工判断项 |
+| 多标签异常的归因（同一设备多种异常） | **未验证**：数据集里每台设备只配了一种异常类型（见 5.1） | 真实数据才有意义 |
+
+## 8.9 截图与日志（均已生成在 `output/`，不进 git）
+
+| 文件 | 内容 |
+|---|---|
+| `output/shot_ai_model.png` | AI 页模型区：状态条、四指标卡、混淆矩阵、四模型对比、分数曲线 |
+| `output/shot_ai_score.png` | 分数曲线特写（折线 + 红色散点 + 橙色真值色块 + 阈值虚线） |
+| `output/logs/phase4_ai_acceptance.log` | `acceptance-ai.mjs` 42 项完整日志（8.3 引用的就是它） |
+| `output/logs/phase4_batch2_rerun.log` | 4.2 批后 `acceptance-batch2.mjs` 复跑日志（24 项） |
+| `output/logs/phase4_motion_rerun.log` | 4.2 批后 `acceptance-motion.mjs` 复跑日志（17 项） |
+
+截图用 `scripts/shot.mjs` 生成——它截的是**浏览器当前已打开的页面**（不接受 URL 参数），所以在跑完
+`acceptance-ai.mjs`（末尾会停在 `/ai`）之后紧接着执行即可：
+
+```powershell
+node scripts\shot.mjs output\shot_ai_model.png --full
+```
+
+> `output/` 与 `artifacts/` 都在 `.gitignore` 里：前者是本地验收证据（截图、DOM 快照、日志），
+> 后者是可由 `ml/` 下脚本重建的模型产物（体积大）。克隆仓库后这两处需要自己跑一遍才会出现。
