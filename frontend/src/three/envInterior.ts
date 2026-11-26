@@ -19,7 +19,14 @@ import type { EnvPart } from './envLayout';
 
 /** 作者给定尺寸（单位米） */
 export const INTERIOR = {
-  wallHeight: 8,
+  /**
+   * 层高 8 → 12（批 2，D-77）。
+   * 作者 2026-11-26 要求「工厂的建模体积更大」，但设备只有 14 台（项目事实，不能加），
+   * 放大占地只会让画面更空。抬高净空是唯一"不摊薄设备密度"的加体积方式：
+   * 同样的 34×30 平面，墙从 8 m 长到 12 m，竖向体量 +50%，设备占比不变。
+   * 真实机械加工车间（带行车/大件吊装）净空普遍 10~14 m，12 m 不算夸张。
+   */
+  wallHeight: 12,
   wallThickness: 0.25,
   /** 0.8 m 踢脚线 */
   skirtingHeight: 0.8,
@@ -28,15 +35,24 @@ export const INTERIOR = {
   pilaster: 0.4,
   /** 南墙卷帘门洞 */
   doorWidth: 6,
-  doorHeight: 4.5,
-  /** 东西墙高窗：2 m 宽 × 1.5 m 高，y 4.5~6 */
-  windowWidth: 2,
-  windowSill: 4.5,
-  windowHeight: 1.5,
+  doorHeight: 6,
+  /**
+   * 东西墙高窗：2 m 宽 × 2.4 m 高，y 7.0~9.4。
+   * 层高抬到 12 后，原来 y4.5~6 的窗会缩在墙中间偏下，人视时像"小气窗"；
+   * 抬到 7~9.4 正好落在人眼仰视的视觉中心，也是厂房高侧窗的常规位置。
+   */
+  windowWidth: 2.4,
+  windowSill: 7.0,
+  windowHeight: 2.4,
   /** 窗框方管截面 */
   frame: 0.12,
-  /** 灯带标高：屋架删除后独立定义，不再挂在桁架下弦之下 */
-  lampY: 7.42,
+  /**
+   * 灯带标高 8.0 m：**不跟着层高走**。
+   * 真实厂房把灯具悬吊在作业面上方 6~9 m，而不是贴着 12 m 的屋盖——贴顶的话
+   * 光离设备太远，且在没有屋盖的场景里会变成一根根悬空的亮条（实测 11.2 m 时
+   * 低机位看到白条斜插在空处，很假）。8 m 既在视觉上"挂在梁下"，也离设备近。
+   */
+  lampY: 8.0,
 } as const;
 
 /** 墙面配色（作者给定） */
@@ -50,6 +66,7 @@ export const INTERIOR_COLORS = {
   shutter: 0x5b656f,
   // 与 envLayout.ENV_COLORS.lamp 同值：灯带沿用既有 emissive 组
   lamp: 0xaac7e4,
+  lampHousing: 0x39434e,
   // ---- R1.5 A 层：柱列与地面细节（人眼高度 3 m 内可见的部件）----
   column: 0xa6afb8,
   columnFoot: 0x1f2b3a,
@@ -289,6 +306,37 @@ export function buildInterior(): InteriorResult {
       }
     }
 
+    // ---- 墙面结构分格（批 2）：壁柱 + 腰线 ----
+    //
+    // 为什么必须有：层高从 8 抬到 12 后，一面 34 m 长 × 12 m 高的墙成了整块白板，
+    // 人视时上半幅是空的，比原来更"空"。真实厂房围护是一格一格的墙板 + 露明壁柱，
+    // 竖向分格一出来，尺度立刻可读（人眼靠重复构件判断高度）。
+    // 壁柱位置刻意避开窗洞（窗在 dz = -8 / 0 / 8，半宽 1.2），否则会把洞堵上。
+    {
+      const z1 = ws.z - ws.sizeZ / 2;
+      const z2 = ws.z + ws.sizeZ / 2;
+      // 东西墙：壁柱按 z 排，避开三扇窗
+      for (const dz of [-12, -4, 4, 12]) {
+        for (const sx of [-1, 1] as const) {
+          const side = `${ws.id}:${sx > 0 ? 'east' : 'west'}`;
+          parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x + sx * (ws.sizeX / 2 - T / 2 - P / 2), H / 2, ws.z + dz, P, H, P, side));
+        }
+      }
+      // 南北墙：壁柱按 x 排；南墙中间是卷帘门，两侧对称避开
+      for (const dx of [-13, -8.5, 8.5, 13]) {
+        parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x + dx, H / 2, z1 + T / 2 + P / 2, P, H, P, `${ws.id}:north`));
+        parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x + dx, H / 2, z2 - T / 2 - P / 2, P, H, P, `${ws.id}:south`));
+      }
+      // 腰线（10.2 m，窗顶 9.4 m 之上）：一圈 0.3×0.25 的深色带，把墙面分成"下部大板 + 上部檐口"
+      const beltY = 10.2;
+      parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x, beltY, z1 + T / 2, ws.sizeX, 0.25, 0.18, `${ws.id}:north`));
+      parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x, beltY, z2 - T / 2, ws.sizeX, 0.25, 0.18, `${ws.id}:south`));
+      for (const sx of [-1, 1] as const) {
+        const side = `${ws.id}:${sx > 0 ? 'east' : 'west'}`;
+        parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x + sx * (ws.sizeX / 2 - T / 2), beltY, ws.z, 0.18, 0.25, ws.sizeZ, side));
+      }
+    }
+
     // ---- 混凝土柱列（R1.5 A 层）----
     parts.push(...columns(ws));
     // 屋架已按作者要求删除（2026-11-25 晚），顶部只留 5 道灯带
@@ -304,7 +352,10 @@ export function buildInterior(): InteriorResult {
     const ext = extendedLine(strip);
     const mid = (ext.x1 + ext.x2) / 2;
     const len = Math.abs(ext.x2 - ext.x1);
-    parts.push(box('emissive', INTERIOR_COLORS.lamp, mid, INTERIOR.lampY, strip.z, len, 0.12, 0.34));
+    // 灯管 + 灯具外壳：只有灯管时，低机位看到的是一条悬空的白棍（实测像一根白梁斜插在空处）。
+    // 外壳给一圈深色金属罩，灯管缩进去 0.06 m，才读得出"这是一盏灯"。
+    parts.push(box('metal', INTERIOR_COLORS.lampHousing, mid, INTERIOR.lampY + 0.16, strip.z, len, 0.18, 0.46));
+    parts.push(box('emissive', INTERIOR_COLORS.lamp, mid, INTERIOR.lampY, strip.z, len, 0.1, 0.3));
   }
 
   return {

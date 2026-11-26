@@ -86,11 +86,25 @@ describe('室内壳（D 批 R1）', () => {
     }
   });
 
-  it('窗洞高度 4.5~6 m、宽 2 m（作者给定）', () => {
+  it('窗洞位置与尺寸跟随 INTERIOR 常量（批 2 层高 12 后抬到 y7~9.4）', () => {
+    // 不再写死数字：层高从 8 抬到 12 时窗带要跟着上移，写死会让"故意改常量"变成"测试坏了"
     for (const o of windowOpenings()) {
-      expect(o.sillY).toBeCloseTo(4.5, 6);
-      expect(o.height).toBeCloseTo(1.5, 6);
-      expect(o.width).toBeCloseTo(2, 6);
+      expect(o.sillY).toBeCloseTo(INTERIOR.windowSill, 6);
+      expect(o.height).toBeCloseTo(INTERIOR.windowHeight, 6);
+      expect(o.width).toBeCloseTo(INTERIOR.windowWidth, 6);
+    }
+  });
+
+  it('墙面壁柱不许堵住窗洞（批 2 层高抬升后新加的竖分格）', () => {
+    const wallPilasters = parts.filter((p) => p.color === INTERIOR_COLORS.pilaster && p.cut);
+    expect(wallPilasters.length).toBeGreaterThan(0);
+    for (const o of windowOpenings()) {
+      for (const p of wallPilasters) {
+        const sx = Math.abs(p.x - o.x) < 1e-6; // 同一面墙（东西墙上的壁柱 x 与洞 x 相同）
+        if (!sx) continue;
+        const overlapZ = Math.abs(p.z - o.z) < (p.sz + o.width) / 2 - 1e-6;
+        expect(overlapZ, `壁柱 z=${p.z} 压住窗洞 z=${o.z}`).toBe(false);
+      }
     }
   });
 
@@ -102,7 +116,8 @@ describe('室内壳（D 批 R1）', () => {
   });
 
   it('墙角包柱 0.4×0.4，共 8 根（两车间 × 4 角）', () => {
-    const pilasters = parts.filter((p) => p.color === INTERIOR_COLORS.pilaster);
+    // 批 2 起墙面也有壁柱（带 cut，跟墙一起剖），只有四角包柱不带 cut
+    const pilasters = parts.filter((p) => p.color === INTERIOR_COLORS.pilaster && !p.cut);
     expect(pilasters).toHaveLength(WORKSHOPS.length * 4);
     for (const p of pilasters) {
       expect(p.sx).toBeCloseTo(0.4, 6);
@@ -116,11 +131,13 @@ describe('室内壳（D 批 R1）', () => {
     for (const p of skirts) expect(p.sy).toBeCloseTo(0.8, 6);
   });
 
-  it('屋架杆件已按作者要求整组删除（2026-11-25 晚）：metal 组 y>7 必须为空', () => {
-    // 原实现每车间 6 榀、每榀 23 根方管，两个车间约 280 根，人眼机位下是一片密网。
-    // 这条是反向守卫：谁把深色杆件加回来，测试立刻失败。
-    const tubes = parts.filter((p) => p.group === 'metal' && p.y > 7);
-    expect(tubes).toHaveLength(0);
+  it('顶部不许有金属杆件（作者 2026-11-26 17:53：不要顶部栏杆挡视线）', () => {
+    // 原实现每车间 6 榀桁架、约 280 根方管；批 1 曾试装 192 件屋盖，被作者当场否决。
+    // 这条是反向守卫：判据取「构件底边高于 层高-1 m」，窗框（顶在 9.4 m）不会误判，
+    // 而任何吊在屋顶下的桁架/檩条/桥架都会命中。
+    const ceiling = INTERIOR.wallHeight - 1;
+    const overhead = parts.filter((p) => p.group === 'metal' && p.y - p.sy / 2 > ceiling);
+    expect(overhead).toHaveLength(0);
   });
 
   it('所有墙件都按顶点色并进既有组，没有新增材质组', () => {
@@ -198,9 +215,12 @@ describe('室外剖切（D 批 R1 追加）', () => {
     const marked = parts.filter((p) => p.cut);
     expect(marked.length).toBeGreaterThan(0);
     for (const p of marked) expect(p.cut, `${p.group}@(${p.x},${p.z})`).toMatch(CUT_RE);
-    // 包柱不许被剖（车间轮廓靠它）；屋架已删，顶部自然也不该有可剖的 metal 件
-    expect(parts.filter((p) => p.color === INTERIOR_COLORS.pilaster && p.cut)).toHaveLength(0);
-    expect(parts.filter((p) => p.group === 'metal' && p.y > 7 && p.cut)).toHaveLength(0);
+    // 四角包柱不许被剖（车间轮廓靠它）；墙面壁柱则**必须**跟墙同组剖掉，否则墙没了壁柱还挂着
+    const cornerPilasters = parts.filter((p) => p.color === INTERIOR_COLORS.pilaster && !p.cut);
+    expect(cornerPilasters).toHaveLength(WORKSHOPS.length * 4);
+    expect(parts.filter((p) => p.color === INTERIOR_COLORS.pilaster && p.cut).length).toBeGreaterThan(0);
+    const ceiling = INTERIOR.wallHeight - 1;
+    expect(parts.filter((p) => p.group === 'metal' && p.y - p.sy / 2 > ceiling && p.cut)).toHaveLength(0);
   });
 
   it('每个车间四面各有剖切组：墙、窗框、玻璃、踢脚线、门导轨都跟着同组走', () => {

@@ -28,8 +28,8 @@ export interface WorkshopSpec {
 }
 
 export const WORKSHOPS: WorkshopSpec[] = [
-  { id: 'WS-A', name: '机加工车间', x: -20, z: 0, sizeX: 34, sizeZ: 30, height: 8 },
-  { id: 'WS-B', name: '检测与装配车间', x: 20, z: 0, sizeX: 34, sizeZ: 30, height: 8 },
+  { id: 'WS-A', name: '机加工车间', x: -20, z: 0, sizeX: 34, sizeZ: 30, height: 12 },
+  { id: 'WS-B', name: '检测与装配车间', x: 20, z: 0, sizeX: 34, sizeZ: 30, height: 12 },
 ];
 
 export const CORRIDOR = { x: 0, z: 0, sizeX: 6, sizeZ: 30 };
