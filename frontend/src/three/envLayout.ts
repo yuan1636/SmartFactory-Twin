@@ -18,7 +18,14 @@ import { buildInterior } from './envInterior';
 import { buildSigns } from './propLayout';
 import type { LineScenario } from './scenario';
 
-export type EnvGroup = 'matte' | 'metal' | 'paint' | 'emissive' | 'glass';
+/**
+ * 环境层的五个基础分组 + 围护壳（批 1）。
+ *
+ * `shell` 是批 1 单独拆出来的：围护墙如果留在 `matte` 里（该组 castShadow=true），
+ * 会把所有从上方来的光挡在墙外，室内只剩不投影的补光——结果是**车间里一点影子都没有**，
+ * 设备像贴纸贴在地上。拆出来后墙不投影，天窗光就能在室内投下设备影子。
+ */
+export type EnvGroup = 'matte' | 'shell' | 'metal' | 'paint' | 'emissive' | 'glass';
 export type EnvShape = 'box' | 'cyl' | 'cone';
 
 export interface EnvPart {

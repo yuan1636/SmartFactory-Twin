@@ -13,6 +13,8 @@ import { readStore, subscribeStore } from '../hooks/useTelemetry';
 import type { EffectiveState } from '../utils/status';
 import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, type DeviceVisual } from './builders';
 import { cutawaySides } from './envInterior';
+import { applySceneEnvironment } from './environment';
+import { createContactShadows } from './contactShadow';
 import { CAMERA_PRESETS, DEFAULT_FOV, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
 import { createLabelRenderer, setLabelShown } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
@@ -214,24 +216,34 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 
     // ACESFilmic 会压暗中间调（这正是它的目的：保住高光），所以配合色调映射必须把光补回来，
     // 否则设备细节全埋进暗部——D1 第一版就是这个症状：墙有了，但"看不清"（比 D0 更糟）。
-    // 冷天光 + 暖地光的半球光负责"体积感"，主方向光负责投影，反侧补光只提亮暗面、不投影。
-    const hemi = new THREE.HemisphereLight(0xdfe9f5, 0x2a3a4d, 1.55);
+    //
+    // 批 1（D-75）把这些光整体压低、把主光抬高：原来 6 盏光互相抵消，明暗被冲平，
+    // 物体"没有受光方向"，这是塑料感的第一个来源。现在把底光交给 IBL（见下面
+    // applySceneEnvironment），直射光只留一盏主光 + 一盏弱补光，对比度才出得来。
+    const hemi = new THREE.HemisphereLight(0xdfe9f5, 0x2a3a4d, 0.95);
     scene.add(hemi);
 
-    const dir = new THREE.DirectionalLight(0xfff4e2, 1.7);
+    const dir = new THREE.DirectionalLight(0xfff4e2, 2.15);
     dir.position.set(30, 50, 20);
     dir.castShadow = true;
     dir.shadow.mapSize.set(2048, 2048);
-    dir.shadow.camera.left = -60;
-    dir.shadow.camera.right = 60;
-    dir.shadow.camera.top = 60;
-    dir.shadow.camera.bottom = -60;
+    // 阴影相机收紧到厂区实际范围（80×56，半 40×28）：原来 ±60 的 120 m 视锥把
+    // 2048² 的阴影贴图摊到 17 px/m，边缘糊成一片；收到 ±46/±34 后约 22 px/m，
+    // 同样的显存换来更实的接触边。
+    dir.shadow.camera.left = -46;
+    dir.shadow.camera.right = 46;
+    dir.shadow.camera.top = 34;
+    dir.shadow.camera.bottom = -34;
     dir.shadow.camera.near = 1;
     dir.shadow.camera.far = 160;
+    // normalBias 沿法线偏移，专治斜面/圆柱上的自阴影条纹（shadow acne）；
+    // bias 给负值是补偿投射体过薄导致的漏光（peter-panning 由 normalBias 兜住）
+    dir.shadow.normalBias = 0.03;
+    dir.shadow.bias = -0.0004;
     scene.add(dir);
 
     // 反侧补光：只负责把主光打不到的暗面从"全黑"提到"能看出轮廓"，不投影（投影会让画面脏）
-    const fill = new THREE.DirectionalLight(0x9dc4e8, 0.45);
+    const fill = new THREE.DirectionalLight(0x9dc4e8, 0.32);
     fill.position.set(-40, 30, -25);
     scene.add(fill);
 
@@ -239,21 +251,46 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // 车间装回 8 m 围墙后，上面这盏投影主光被挡在墙外，室内只剩不到一半的照度（实测会暗 20%+）。
     // 三件一套：半球光抬底（模拟墙面/地面的互相反弹），两盏不投影的天窗光把光"从屋顶漏进来"。
     // 都不投影：室内已经有主光的投影，再加两套阴影会让地面发脏，而且阴影贴图重算三倍。
-    const interiorHemi = new THREE.HemisphereLight(0x9fb2c4, 0x1f2b3a, 1.15);
+    // 批 1 改动：ground 色从 0x1f2b3a 提到 0x5d6a76。半球光的 ground 色照的是**朝下的面**，
+    // 也就是屋顶下弦与檩条——原来给那么暗，屋盖在低机位看是一团黑；真实车间里屋顶被
+    // 地面的反弹光打亮，这是"抬头能看见结构"的物理来源。
+    const interiorHemi = new THREE.HemisphereLight(0x9fb2c4, 0x5d6a76, 0.7);
     scene.add(interiorHemi);
 
-    const skylight1 = new THREE.DirectionalLight(0xdce8f4, 1.35);
+    // 天窗光 1 改为**投影**（批 1）。原来两盏天窗光都不投影，加上围护墙又把主光挡在墙外，
+    // 室内就成了"完全没有影子"的平光——这是设备像贴纸贴在地上的根因。
+    // 墙已拆进不投影的 shell 组（见 envBuilder），这盏光才能真正穿过屋盖照进车间。
+    // 代价是阴影 pass 多一遍（实测 shadowCalls 27 → 54），场景 draw call 不变。
+    const skylight1 = new THREE.DirectionalLight(0xdce8f4, 1.0);
     skylight1.position.set(-26, 44, 52); // 从南侧天窗方向斜下
-    skylight1.castShadow = false;
+    skylight1.castShadow = true;
+    skylight1.shadow.mapSize.set(2048, 2048);
+    skylight1.shadow.camera.left = -52;
+    skylight1.shadow.camera.right = 52;
+    skylight1.shadow.camera.top = 38;
+    skylight1.shadow.camera.bottom = -38;
+    skylight1.shadow.camera.near = 1;
+    skylight1.shadow.camera.far = 170;
+    skylight1.shadow.normalBias = 0.03;
+    skylight1.shadow.bias = -0.0004;
     scene.add(skylight1);
 
-    const skylight2 = new THREE.DirectionalLight(0xcfdcea, 0.9);
+    const skylight2 = new THREE.DirectionalLight(0xcfdcea, 0.55);
     skylight2.position.set(34, 40, -46); // 反侧补，避免室内只剩一个方向的明暗
     skylight2.castShadow = false;
     scene.add(skylight2);
 
+    // 环境反射（批 1）：程序化烘一张"本车间"的辐照度贴图，金属才有东西可反射。
+    // 强度 0.6 是"补反射、不抬曝光"——底光仍以半球光为主，否则会整体发灰。
+    const env = applySceneEnvironment(renderer, scene, 0.85);
+
     const build = buildFactory();
     scene.add(build.root);
+
+    // 接触阴影（批 1）：阴影贴图给不了"贴地感"，用它补设备脚下那一圈短距暗区。
+    // 单独 add（不在 envRoot 内），所以不参与拾取，点设备不会点到它的影子上。
+    const contact = createContactShadows();
+    scene.add(contact.mesh);
 
     // 后处理管线（D1 视觉基调）：RenderPass → Bloom → OutputPass → SMAA。
     // 必须在 build 之后创建，否则首帧没有 bloom 与色调映射，截图会拍到"半成品"。
@@ -515,13 +552,18 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     let sceneCalls = 0;
     let shadowCalls = 0;
     const measureSceneCalls = (withShadows = false) => {
-      const prev = dir.castShadow;
+      // 批 1 起有两盏投影光（外场主光 + 室内天窗光），必须同时开关——
+      // 只切 dir 的话，天窗光的阴影 pass 会一直算进 sceneCalls，指标就假了
+      const prevDir = dir.castShadow;
+      const prevSky = skylight1.castShadow;
       dir.castShadow = withShadows;
+      skylight1.castShadow = withShadows;
       renderer.info.reset();
       renderer.render(scene, camera);
       const calls = renderer.info.render.calls;
       const triangles = renderer.info.render.triangles;
-      dir.castShadow = prev;
+      dir.castShadow = prevDir;
+      skylight1.castShadow = prevSky;
       if (!withShadows) sceneCalls = calls;
       return { sceneCalls: calls, sceneTriangles: triangles, withShadows };
     };
@@ -872,6 +914,9 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       motion.dispose();
       postfx.dispose();
       build.dispose();
+      // 批 1 新增的两份资源：环境贴图（PMREM target）与接触阴影（合并几何 + 贴图）
+      env.dispose();
+      contact.dispose();
       scene.background = null;
       // 背景贴图不在 materials 池里，单独释放；否则反复挂载会累积显存
       backgroundTexture.dispose();

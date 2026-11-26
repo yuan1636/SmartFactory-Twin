@@ -168,6 +168,16 @@ export function buildEnv(): EnvBuild {
       receiveShadow: true,
     },
     {
+      // 围护壳（批 1，D-75）：墙、踢脚、包柱。单独成组只为了**关掉投影**——
+      // 墙一旦投影，从上方来的光全被挡在墙外，室内只剩不投影的补光，
+      // 结果是车间里没有任何设备影子（实测：LINE-A1 近景地面完全无影，
+      // 设备像贴纸）。接收阴影仍开着，墙面上仍能接到设备与柱子的投影。
+      group: 'shell',
+      material: mat(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.05 })),
+      castShadow: false,
+      receiveShadow: true,
+    },
+    {
       group: 'metal',
       material: mat(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.52, metalness: 0.62 })),
       castShadow: false,

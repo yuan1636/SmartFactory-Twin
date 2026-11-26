@@ -41,7 +41,9 @@ export const INTERIOR = {
 
 /** 墙面配色（作者给定） */
 export const INTERIOR_COLORS = {
-  wall: 0x8f99a3,
+  // 批 1：0x8f99a3 → 0x7c8792。加了 IBL 与室内投影后，原来的浅灰墙被抬到接近白，
+  // 设备反倒成了画面里最暗的东西，主次颠倒；压深一档后设备轮廓才立得起来。
+  wall: 0x7c8792,
   skirting: 0x1f2b3a,
   pilaster: 0x57606a,
   frame: 0x6e7883,
@@ -86,10 +88,10 @@ function wallBands(
 ): void {
   const { wallThickness: T, windowSill, windowHeight, wallHeight: H } = INTERIOR;
   // 洞下整段（0 ~ 4.5）
-  out.push(box('matte', INTERIOR_COLORS.wall, wx, windowSill / 2, ws.z, T, windowSill, spanZ, cut));
+  out.push(box('shell', INTERIOR_COLORS.wall, wx, windowSill / 2, ws.z, T, windowSill, spanZ, cut));
   // 洞上整段（6 ~ 8）
   const topH = H - (windowSill + windowHeight);
-  out.push(box('matte', INTERIOR_COLORS.wall, wx, H - topH / 2, ws.z, T, topH, spanZ, cut));
+  out.push(box('shell', INTERIOR_COLORS.wall, wx, H - topH / 2, ws.z, T, topH, spanZ, cut));
   // 洞高区间（4.5 ~ 6）的窗间墙：窗口之外全是墙
   const half = INTERIOR.windowWidth / 2;
   let cursor = ws.z - spanZ / 2;
@@ -101,7 +103,7 @@ function wallBands(
   gaps.push([cursor, ws.z + spanZ / 2]);
   for (const [a, b] of gaps) {
     if (b - a < 0.01) continue;
-    out.push(box('matte', INTERIOR_COLORS.wall, wx, windowSill + windowHeight / 2, (a + b) / 2, T, windowHeight, b - a, cut));
+    out.push(box('shell', INTERIOR_COLORS.wall, wx, windowSill + windowHeight / 2, (a + b) / 2, T, windowHeight, b - a, cut));
   }
 }
 
@@ -247,19 +249,19 @@ export function buildInterior(): InteriorResult {
     const spanZ = ws.sizeZ + T;
 
     // ---- 北墙（-z）：整段 ----
-    parts.push(box('matte', INTERIOR_COLORS.wall, ws.x, H / 2, z1, spanX, H, T, `${ws.id}:north`));
+    parts.push(box('shell', INTERIOR_COLORS.wall, ws.x, H / 2, z1, spanX, H, T, `${ws.id}:north`));
 
     // ---- 南墙（+z）：6 m × 4.5 m 卷帘门洞 ----
     const south = `${ws.id}:south`;
     const doorHalf = DW / 2;
     const leftA = x1 - T / 2;
     const leftB = ws.x - doorHalf;
-    parts.push(box('matte', INTERIOR_COLORS.wall, (leftA + leftB) / 2, H / 2, z2, leftB - leftA, H, T, south));
+    parts.push(box('shell', INTERIOR_COLORS.wall, (leftA + leftB) / 2, H / 2, z2, leftB - leftA, H, T, south));
     const rightA = ws.x + doorHalf;
     const rightB = x2 + T / 2;
-    parts.push(box('matte', INTERIOR_COLORS.wall, (rightA + rightB) / 2, H / 2, z2, rightB - rightA, H, T, south));
+    parts.push(box('shell', INTERIOR_COLORS.wall, (rightA + rightB) / 2, H / 2, z2, rightB - rightA, H, T, south));
     // 门上过梁
-    parts.push(box('matte', INTERIOR_COLORS.wall, ws.x, (INTERIOR.doorHeight + H) / 2, z2, DW, H - INTERIOR.doorHeight, T, south));
+    parts.push(box('shell', INTERIOR_COLORS.wall, ws.x, (INTERIOR.doorHeight + H) / 2, z2, DW, H - INTERIOR.doorHeight, T, south));
     doorUnit(parts, ws, z2, south);
 
     // ---- 东西墙（±x）：各 3 个高窗洞 ----
@@ -273,17 +275,17 @@ export function buildInterior(): InteriorResult {
     // ---- 踢脚线（0.8 m，贴内侧；南墙让开门洞）----
     const skirtZ = T / 2 + INTERIOR.skirtingThickness / 2;
     const skirtLen = ws.sizeZ - 0.5;
-    parts.push(box('matte', INTERIOR_COLORS.skirting, ws.x, INTERIOR.skirtingHeight / 2, z1 + skirtZ, ws.sizeX - 0.5, INTERIOR.skirtingHeight, INTERIOR.skirtingThickness));
-    parts.push(box('matte', INTERIOR_COLORS.skirting, ws.x, INTERIOR.skirtingHeight / 2, z2 - skirtZ, ws.sizeX - 0.5, INTERIOR.skirtingHeight, INTERIOR.skirtingThickness, south));
+    parts.push(box('shell', INTERIOR_COLORS.skirting, ws.x, INTERIOR.skirtingHeight / 2, z1 + skirtZ, ws.sizeX - 0.5, INTERIOR.skirtingHeight, INTERIOR.skirtingThickness));
+    parts.push(box('shell', INTERIOR_COLORS.skirting, ws.x, INTERIOR.skirtingHeight / 2, z2 - skirtZ, ws.sizeX - 0.5, INTERIOR.skirtingHeight, INTERIOR.skirtingThickness, south));
     for (const sx of [-1, 1] as const) {
       const side = `${ws.id}:${sx > 0 ? 'east' : 'west'}`;
-      parts.push(box('matte', INTERIOR_COLORS.skirting, ws.x + sx * (ws.sizeX / 2 - skirtZ), INTERIOR.skirtingHeight / 2, ws.z, INTERIOR.skirtingThickness, INTERIOR.skirtingHeight, skirtLen, side));
+      parts.push(box('shell', INTERIOR_COLORS.skirting, ws.x + sx * (ws.sizeX / 2 - skirtZ), INTERIOR.skirtingHeight / 2, ws.z, INTERIOR.skirtingThickness, INTERIOR.skirtingHeight, skirtLen, side));
     }
 
     // ---- 墙角包柱 0.4×0.4 ----
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        parts.push(box('matte', INTERIOR_COLORS.pilaster, ws.x + sx * (ws.sizeX / 2 - T / 2 - P / 2), H / 2, ws.z + sz * (ws.sizeZ / 2 - T / 2 - P / 2), P, H, P));
+        parts.push(box('shell', INTERIOR_COLORS.pilaster, ws.x + sx * (ws.sizeX / 2 - T / 2 - P / 2), H / 2, ws.z + sz * (ws.sizeZ / 2 - T / 2 - P / 2), P, H, P));
       }
     }
 
@@ -346,11 +348,14 @@ export function windowOpenings(): WindowOpening[] {
  * 剖切规则：相机落在某车间的某一侧**室外**时，那一侧的墙整组退化为不可见。
  *
  * 为什么不做半透明：半透明要改材质（加 transparent 或新材质），会破坏
- * "六个合并组封顶"的约束；退化为不可见只需要改合并后的索引，阴影 pass 走
+ * "合并组封顶"的约束；退化为不可见只需要改合并后的索引，阴影 pass 走
  * 同一份索引，天然不会出现"墙没了影子还在"的穿帮。
- * 包柱不剖（四角留柱，车间轮廓仍读得出来）；桁架不剖（俯视/侧视都有顶盖感）。
+ * 包柱不剖（四角留柱，车间轮廓仍读得出来）。
  *
- * 纯函数（只吃 x/z），单测直接覆盖总览/入场/车间内三个典型机位。
+ * 作者 2026-11-26 明确「不需要添加顶部栏杆影响视线」，所以这里**没有**屋盖剖切规则：
+ * 顶部桁架/檩条已整批不建（roof.ts 未落地），体量改由墙体、夹层与机位承担。
+ *
+ * 纯函数，单测直接覆盖总览/入场/车间内三个典型机位。
  */
 export function cutawaySides(camera: { x: number; z: number }): string[] {
   const out: string[] = [];

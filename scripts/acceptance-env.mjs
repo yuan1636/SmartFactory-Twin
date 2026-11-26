@@ -17,7 +17,9 @@ import { connect, sleep, check, summarize, WEB } from './lib/cdp.mjs';
 
 const SHOT_DIR = process.argv[2] ?? 'output/env';
 const SCENE_BUDGET = 100;
-const ENV_GROUP_BUDGET = 6;
+// 6 → 7：批 1（D-75）把围护壳拆成独立的 shell 组，只为关掉墙的投影
+// （墙投影会把室内所有光挡在外面，车间里就一点影子都没有）
+const ENV_GROUP_BUDGET = 7;
 const MIN_FPS = 50;
 const MIN_LUMA = 6;
 

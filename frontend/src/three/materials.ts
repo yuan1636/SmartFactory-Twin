@@ -57,6 +57,68 @@ function makeConcreteTexture(): THREE.CanvasTexture {
 }
 
 /**
+ * 地面粗糙度贴图（批 1）：让同一片混凝土上出现"干湿不均"。
+ *
+ * 为什么必须有：地面若整片 roughness 0.92，加了环境反射也是一片死灰；
+ * 真实的车间地面有油渍、水痕、叉车碾压过的抛光带，这些地方粗糙度低、
+ * 会反射顶灯，画面立刻"湿"起来。这是最便宜的一种真实感（1 张 canvas，
+ * 0 次额外 draw call）。
+ *
+ * 取值约定（three 的 roughnessMap 走绿色通道，白=粗糙、黑=光滑）：
+ * 底色 0.88 → 干燥混凝土；油渍/水痕处 0.25~0.45 → 出现反光斑；
+ * 再叠一层低频起伏，避免"一块块贴上去"的补丁感。
+ */
+function makeFloorRoughnessTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法创建 canvas 2d 上下文，地面粗糙度贴图生成失败');
+
+  ctx.fillStyle = 'rgb(224,224,224)'; // 0.88
+  ctx.fillRect(0, 0, size, size);
+
+  // 低频起伏：大范围明暗，决定哪些区域整体更"湿"
+  for (let i = 0; i < 26; i += 1) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 40 + Math.random() * 120;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const v = Math.random() < 0.55 ? 90 + Math.random() * 60 : 200 + Math.random() * 40;
+    g.addColorStop(0, `rgba(${v},${v},${v},0.5)`);
+    g.addColorStop(1, 'rgba(224,224,224,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 油渍：小而黑的核心 + 软边，随机铺十几处
+  for (let i = 0; i < 16; i += 1) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 12 + Math.random() * 34;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(60,60,60,0.85)');
+    g.addColorStop(0.55, 'rgba(120,120,120,0.35)');
+    g.addColorStop(1, 'rgba(224,224,224,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(FACTORY.sizeX / 12, FACTORY.sizeZ / 12); // 比颜色贴图尺度大一倍，免得补丁过密
+  tex.colorSpace = THREE.NoColorSpace; // 权重图，不是颜色
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
  * 程序化墙板贴图：竖向板缝 + 踢脚线暗带。
  * 为什么需要：实墙解决"没有背景"，但纯色墙在近景里仍是一块色板，
  * 看不出是"厂房围护结构"（D0 问题 #1 / #2 的延伸）。
@@ -174,6 +236,7 @@ export function createMaterials(): SceneMaterials {
   }
 
   const floorTexture = makeConcreteTexture();
+  const floorRoughness = makeFloorRoughnessTexture();
   const wallTexture = makeWallTexture();
 
   return {
@@ -192,15 +255,21 @@ export function createMaterials(): SceneMaterials {
     body,
     deviceShell: new THREE.MeshStandardMaterial({
       vertexColors: true,
-      roughness: 0.58,
-      metalness: 0.34,
+      roughness: 0.5,
+      metalness: 0.36,
+      // 环境反射权重：低于 1 是为了让顶点色仍主导外观，只在金属部位出高光，
+      // 否则整台机床会被环境"漂白"，丢掉 CNC / 机器人各自的机身色
+      envMapIntensity: 0.85,
     }),
     outline: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
     floor: new THREE.MeshStandardMaterial({
       map: floorTexture,
       color: 0xffffff, // 贴图自带基色，这里不再乘色，否则会二次压暗
-      roughness: 0.92,
-      metalness: 0.02,
+      roughness: 1.0, // 由 roughnessMap 控制：干燥处 ≈0.86，油渍/水痕处 ≈0.3
+      roughnessMap: floorRoughness,
+      metalness: 0.06,
+      // 地面是唯一"湿反光"的主角，权重给到 1.15 才看得见灯带在油渍上的倒影
+      envMapIntensity: 1.15,
     }),
     // 墙面：原来是 opacity 0.12 + depthWrite:false 的"幽灵墙"，截图里等于没有（D0 问题 #1）。
     // 改成实墙：8 m 高、朝内可见，总览机位（y=40）仍能从墙顶看进车间内部。
@@ -209,6 +278,7 @@ export function createMaterials(): SceneMaterials {
       color: 0xffffff, // 贴图自带明暗与板缝，不再乘色
       roughness: 0.88,
       metalness: 0.06,
+      envMapIntensity: 0.45, // 墙是漫反射面，环境只补一点，给多了会"发塑料"
       side: THREE.DoubleSide,
     }),
     strip: new THREE.MeshBasicMaterial({ color: 0x1e3a5f, transparent: true, opacity: 0.9 }),
@@ -233,6 +303,7 @@ export function disposeMaterials(materials: SceneMaterials | null): void {
   materials.deviceShell.dispose();
   materials.outline.dispose();
   materials.floor.map?.dispose(); // 程序化贴图是运行时创建的，不 dispose 会在反复挂载时累积显存
+  materials.floor.roughnessMap?.dispose();
   materials.floor.dispose();
   materials.wall.map?.dispose();
   materials.wall.dispose();

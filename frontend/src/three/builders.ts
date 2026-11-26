@@ -144,9 +144,25 @@ export function buildFactory(): FactoryBuild {
 
   // ---------- 厂房与产线 ----------
 
-  const addPave = (x: number, z: number, sizeX: number, sizeZ: number, name: string) => {
+  const addPave = (
+    x: number,
+    z: number,
+    sizeX: number,
+    sizeZ: number,
+    name: string,
+    material: THREE.Material = materials.pave,
+  ) => {
     const geo = track(new THREE.PlaneGeometry(sizeX, sizeZ));
-    const mesh = new THREE.Mesh(geo, materials.pave);
+    // 与全厂地面共用同一张程序化贴图时，贴图 repeat 是按 80×56 的全厂尺寸设的。
+    // 若不改 UV，34×30 的车间平面上会被塞进 13 个循环 → 每块 2.5 m，与旁边 6 m 的
+    // 分仓缝对不上，接缝处一眼能看出两套尺度。按面积比例缩 UV 即可对齐。
+    if (material === materials.floor) {
+      const uv = geo.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i += 1) {
+        uv.setXY(i, uv.getX(i) * (sizeX / FACTORY.sizeX), uv.getY(i) * (sizeZ / FACTORY.sizeZ));
+      }
+    }
+    const mesh = new THREE.Mesh(geo, material);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.004, z);
     mesh.name = name;
@@ -160,8 +176,14 @@ export function buildFactory(): FactoryBuild {
   // 8 m 高的实墙从斜侧机位直接挡住半个车间，看设备反而要绕着找角度。
   // 「室内感」改由柱子 + 屋顶桁架 + 顶部灯带 + 桥架承担（envBuilder.ts），
   // 这些竖向/顶部构件不挡视线。墙材质仍保留在 SceneMaterials 里，将来要做半高围挡可直接复用。
+  // 车间地坪改用**受光材质**（批 1，D-75）。原来这里铺的是 `pave`（MeshBasicMaterial，
+  // 0x676f76，不受光、无贴图），它压在带混凝土贴图的地面上方 4 mm，把贴图、粗糙度、
+  // 环境反射与接收阴影**全部盖掉**——近景里地面就是一块均匀的浅灰板，
+  // 这是"像展台不像车间"的直接原因之一。现在车间沿用 materials.floor：
+  // 有骨料颗粒、有分仓缝、roughnessMap 让油渍处反光、receiveShadow 能接设备影子。
+  // 动力站仍用 pave：那里是室外硬地，不需要贴图与反射。
   for (const ws of WORKSHOPS) {
-    addPave(ws.x, ws.z, ws.sizeX, ws.sizeZ, `pave:${ws.id}`);
+    addPave(ws.x, ws.z, ws.sizeX, ws.sizeZ, `pave:${ws.id}`, materials.floor);
   }
   addPave(POWER_STATION.x, POWER_STATION.z, POWER_STATION.sizeX, POWER_STATION.sizeZ, 'pave:AUX');
 

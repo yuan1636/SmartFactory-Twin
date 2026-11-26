@@ -124,8 +124,25 @@ describe('室内壳（D 批 R1）', () => {
   });
 
   it('所有墙件都按顶点色并进既有组，没有新增材质组', () => {
+    // 批 1 起多一个 shell 组：围护墙/踢脚/包柱必须与 matte 分开，才能单独关掉投影
+    // （墙投影会把室内所有直射光挡在外面，车间里就没有任何设备影子）。
+    // 这不是"新增材质"，仍是顶点色 + 一份 MeshStandardMaterial，只多 1 次 draw call。
     const groups = new Set(parts.map((p) => p.group));
-    for (const g of groups) expect(['matte', 'metal', 'paint', 'emissive', 'glass']).toContain(g);
+    for (const g of groups) expect(['matte', 'shell', 'metal', 'paint', 'emissive', 'glass']).toContain(g);
+  });
+
+  it('围护墙/踢脚/包柱全在 shell 组（否则室内又会没有影子）', () => {
+    const shell = parts.filter((p) => p.group === 'shell');
+    expect(shell.length).toBeGreaterThan(0);
+
+    // 反向守卫：matte 里不许再出现"整面墙"。
+    // 判据用尺寸而不是颜色——柱脚与踢脚线同色（0x1f2b3a），按颜色判会把柱脚当成墙。
+    // 墙的形态是「满高 + 长跨」；柱子是 0.5×0.5，不会被误判。
+    const tall = INTERIOR.wallHeight - 1e-6;
+    const wallLike = parts.filter(
+      (p) => p.group === 'matte' && p.sy >= tall && Math.max(p.sx, p.sz) > 5,
+    );
+    expect(wallLike).toHaveLength(0);
   });
 
   it('灯带 4 道（只照产线；中央通道那道已按作者 2026-11-26 要求删除），标高由 lampY 独立定义', () => {
