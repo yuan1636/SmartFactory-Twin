@@ -12,12 +12,13 @@
 R1 车间室内壳 → R1.5 A 观看方式（FOV 60 + WALK/AISLE 人视预设）→ R2/R3 设备建模 v2 →
 顶部清理 → 色调亮化（亮灰车间 + 暗青背景 + HUD 青化）→ `/overview` 纯三维展示页 →
 场景减法（删灯带/中排柱）→ 初始视角校准 → R1.6 补场景密度（tag `v0.4-density`）→
-**R1.6 回退（作者 2026-11-26 11:26：「这些显示装置我用不上了，去掉，其它的不要动」）**。
+**R1.6 回退（作者 2026-11-26 11:26：「这些显示装置我用不上了，去掉，其它的不要动」）**→
+**AI 页改「工厂日报」（D-74，2026-11-26 下午：结论 / 待办 / 交付风险 / 损失账 + 折叠模型详情）**。
 
 场景 draw call **57**（上限 100）、整链 **101**（57+27+17），三角 **33,210**，帧率 144 fps 未降。
-设备验收 **54/54**、单测 **167 passed**、`tsc` 0 error；
-d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / d3 11/11 / device 54/54 全绿；
-batch2 20/24（4 项失败 = 生产页统计空窗数据态，长期存在，与本批无关）。
+设备验收 **54/54**、单测 **185 passed**（新增 dailyReport 18 条）、`tsc` 0 error；
+d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / d3 11/11 / device 54/54 / **AI 页 54/54** 全绿；
+**batch2 24/24**（订单修复后生产页数据齐了，AI 页断言已按新信息架构更新，见 D-74）。
 **2026-11-26 插入一次后端修复（`ffa8e67`）**：订单推进间隔 7200 s → 120 s（生产分析页 24 小时窗口因此恒空），
 ensure_orders 加逾期在制单自愈；pytest 25 → 28 passed（新增 `tests/test_orders.py`），见 §4 #17。
 **下一步仍是 D4 剩余（粒子与旋转光斑），之后 D5 界面层收尾、D6 性能与演示物料。**
@@ -53,6 +54,7 @@ ensure_orders 加逾期在制单自愈；pytest 25 → 28 passed（新增 `tests
 | HUD 青化 | tokens 深青色系 + 视口覆盖层 HUD 风格（`79bd4b5`） | 已完成 | — |
 | 场景减法 | 删中央通道灯带（`76051a6`）、车间中排柱（`76c032e`） | 已完成 | 同上提交 |
 | 视角校准 | 初始总览整机位 +x 平移 4，入场球心随 target 平移（`2c38108`） | 已完成 | — |
+| **AI 页改工厂日报** | 四块结论优先 + 折叠模型详情；`config/report.json` + `/report/config` 提供假设系数（D-74） | 已完成，§19 | `acceptance_phase4.md` §19 |
 | **R1.6 密度（已回退）** | 每车间 47 装饰件 + 4 类 InstancedMesh（`4502540`，tag `v0.4-density`）；作者 2026-11-26 要求去掉，代码已回退，只留环境层拾取遮挡 | 已回退，§18.6 | `acceptance_phase4.md` §18.6 |
 | R1.5 B 层 | 厂区 116×78 放大 + 月台/堆场 | **未实施**（作者未确认，FACTORY 仍 80×56） | `spec_phase4.md` R1.5 任务书 |
 | D4（剩余） | 粒子（火花/冷却液雾）与旋转光斑 | **未开始（下一步）** | `docs/spec_phase4.md` §3 |
@@ -162,7 +164,23 @@ node scripts/acceptance-device.mjs       → 54/54
 ```
 
 回退前同一批脚本（2026-11-26 10:00，R1.6 收尾）的数字：179 tests、ENV_GROUP_BUDGET 10、scene 61 / 三角 36,122 / 整链 105。
-motion 17/17、d2 19/19、batch2 20/24 未受本次回退影响（只动 three/ 环境层与 propLayout），故按 10:00 的结论沿用。
+
+### 2.3 AI 页改版复跑（2026-11-26 13:20，D-74）
+
+```text
+cd frontend && npx tsc -b                → 0 error
+cd frontend && npx vitest run            → 17 files / 185 tests passed（167 + dailyReport 18 条）
+cd . && .venv/Scripts/python.exe -m pytest -q  → 28 passed（含修好 tests/test_orders.py 的共享库隔离）
+node scripts/acceptance-ai.mjs           → 54/54（默认 4 块 / 逐行复算 / 单价 0 / 折叠区比对）
+node scripts/acceptance-batch2.mjs       → 24/24（AI 页 4 条旧断言已按新 IA 更新）
+node scripts/acceptance-d3.mjs           → 11/11
+node scripts/acceptance-env.mjs          → 23/23
+```
+
+注：pytest 首次跑出现 `test_ensure_orders_settles_overdue_and_creates_new` 失败，
+原因是模拟器跑了一整天、LINE-A1 已有在制单（ORD-20261126-0005），而 `ensure_orders`
+的设计是「一条线至多一张在制单」，于是不再开新单——断言误红。已在 fixture 里把该线已有的
+在制单临时标成 PLANNED、结束后恢复，属测试隔离修复，业务代码未动。
 
 D3 交付时的完整验收输出留在 `output/logs/d3_acceptance.log`（**不进 git**，本地文件）：
 
@@ -307,7 +325,7 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 
 | 想知道 | 去哪 |
 |---|---|
-| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3）、§14（白底与去雾）、§15（R1 室内壳）、§18 与 §18.6（R1.6 密度及其回退） |
+| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3）、§14（白底与去雾）、§15（R1 室内壳）、§18 与 §18.6（R1.6 密度及其回退）、§19（AI 工厂日报） |
 | 施工规格：目标、七段字段、硬指标、验收命令 | `docs/spec_phase4.md` v4.0 |
 | D0 的 20 条问题清单 | `docs/audit_d0.md` |
 | D 批 R1 / R1.5 A / R2 / R3 / 顶部清理的验收原文与截图 | `docs/acceptance_phase4_d.md` |
