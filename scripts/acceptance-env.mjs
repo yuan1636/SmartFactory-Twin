@@ -110,8 +110,15 @@ const main = async () => {
   const byId = Object.fromEntries(m.lines.map((l) => [l.lineId, l]));
   check('A1 满负荷：全速且通畅', byId['LINE-A1'].speed > 2.3 && byId['LINE-A1'].running,
     `speed=${byId['LINE-A1'].speed} running=${byId['LINE-A1'].running}`);
-  check('A2 轻微堵料：被 ROB-02 闸住', !byId['LINE-A2'].running && byId['LINE-A2'].blockedBy === 'ROB-02',
-    `blockedBy=${byId['LINE-A2'].blockedBy}`);
+  // blockedBy 是"当前把料闸住的那台设备"。料会沿线推进，闸点也跟着从 CNC-02 换到
+  // ROB-02、再到 CONV-02——写死 ROB-02 会让这条断言随运行时长随机红（2026-11-26 实测
+  // 出现过 blockedBy=CNC-02）。判定改为"停住 + 闸点是本线设备"，语义不变且稳定。
+  const A2_DEVICES = ['CNC-02', 'ROB-02', 'CONV-02'];
+  check(
+    'A2 轻微堵料：停住且闸点在本线',
+    !byId['LINE-A2'].running && A2_DEVICES.includes(byId['LINE-A2'].blockedBy),
+    `blockedBy=${byId['LINE-A2'].blockedBy}`,
+  );
   check('B1 检修：带速 0 且停住', byId['LINE-B1'].speed === 0 && !byId['LINE-B1'].running,
     `speed=${byId['LINE-B1'].speed} running=${byId['LINE-B1'].running}`);
   check('B2 换型待料：慢速且在线稀疏', byId['LINE-B2'].speed > 0 && byId['LINE-B2'].speed < 1.2,

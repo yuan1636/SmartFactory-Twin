@@ -17,7 +17,9 @@ const args = process.argv.slice(2);
 const OUT = args.find((a) => !a.startsWith('--')) ?? 'output/device';
 const EXPECT = Number(args.find((a) => a.startsWith('--expect='))?.split('=')[1] ?? 14);
 const MIN_PARTS = { CNC: 12, ROBOT: 8, CONVEYOR: 8, INSPECTION: 8, AIR: 8, PUMP: 8 };
-const MAX_MESHES = 3;
+// 3 → 4（批 3）：输送机换 GLB 后是 2 个烘焙桶 + 滚筒 + 定位条 = 4 个。
+// 滚筒与定位条是动画件（每帧写实例矩阵），不能并进静态桶，属必要例外。
+const MAX_MESHES = 4;
 const MAX_TRIANGLES = 8000;
 const SCENE_BUDGET = 100;
 const MIN_LUMA = 6;

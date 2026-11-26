@@ -254,6 +254,77 @@ def build_inspection(m):
     box("ins_warn_band", (0, -0.72, 1.02), (2.6, 0.04, 0.06), m["warn_yellow"], bevel=0.0)
 
 
+def build_conveyor(m):
+    """滚筒输送机：10.0 × 1.2 × 0.9。
+
+    **刻意不建滚筒**：前端 `RollerRig` 每帧写 8 个滚筒的实例矩阵做旋转，
+    这里再放一套圆柱就会双份。GLB 只负责机架、支腿、侧梁、电机、控制盒，
+    滚筒与定位条留给程序化那一套（y=0.82、半径 0.18，与 builders.ts 一致）。
+    """
+    # 机架床面（低于滚筒轴，露得出滚筒）
+    box("cv_bed", (0, 0, 0.60), (9.8, 1.05, 0.06), m["dark_steel"], bevel=0.01)
+    # 两侧侧梁：比滚筒轴高一点，滚筒夹在中间才像输送线
+    for sy in (-1, 1):
+        box(f"cv_rail_{sy}", (0, sy * 0.58, 0.86), (10.0, 0.06, 0.22), m["paint_dark"], bevel=0.01)
+        box(f"cv_rail_cap_{sy}", (0, sy * 0.58, 0.98), (10.0, 0.09, 0.03), m["steel"], bevel=0.0)
+
+    # 支腿：6 组，每组两根 + 横撑
+    for i in range(6):
+        x = -4.5 + i * 1.8
+        for sy in (-1, 1):
+            box(f"cv_leg_{i}_{sy}", (x, sy * 0.5, 0.29), (0.08, 0.08, 0.58), m["dark_steel"], bevel=0.005)
+        box(f"cv_cross_{i}", (x, 0, 0.2), (0.06, 1.0, 0.06), m["dark_steel"], bevel=0.0)
+
+    # 驱动电机与减速机
+    box("cv_motor", (-4.9, 0.15, 0.45), (0.55, 0.42, 0.38), m["paint_dark"], bevel=0.02)
+    cyl("cv_motor_shaft", (-4.6, 0.15, 0.45), 0.07, 0.2, m["steel"], axis="X", bevel=0.0)
+    # 尾部张紧与端部溜槽
+    box("cv_chute", (5.0, 0, 0.72), (0.5, 1.0, 0.24), m["steel"], bevel=0.01)
+    # 控制盒 + 急停
+    box("cv_ctrl_box", (4.4, 0.62, 0.95), (0.4, 0.24, 0.5), m["paint_dark"], bevel=0.02)
+    box("cv_ctrl_screen", (4.4, 0.49, 0.98), (0.3, 0.02, 0.3), m["screen"], bevel=0.0)
+    cyl("cv_estop", (4.4, 0.62, 1.24), 0.05, 0.06, m["warn_yellow"], bevel=0.0)
+    # 支腿警示贴
+    for sy in (-1, 1):
+        box(f"cv_warn_{sy}", (0, sy * 0.62, 0.6), (0.5, 0.01, 0.12), m["warn_yellow"], bevel=0.0)
+
+
+def build_aux_air(m):
+    """空压机：2.4 × 1.6 × 2.0"""
+    box("air_skid", (0, 0, 0.08), (2.3, 1.5, 0.16), m["dark_steel"], bevel=0.02)
+    # 立式储气罐
+    cyl("air_tank", (-0.55, 0, 0.95), 0.5, 1.5, m["paint_blue"], bevel=0.02)
+    cyl("air_tank_top", (-0.55, 0, 1.74), 0.5, 0.06, m["steel"], bevel=0.01)
+    cyl("air_tank_bottom", (-0.55, 0, 0.18), 0.5, 0.06, m["steel"], bevel=0.01)
+    # 主机与电机
+    box("air_motor", (0.55, 0, 0.55), (1.1, 1.2, 0.7), m["paint_light"], bevel=0.04)
+    cyl("air_motor_fan", (0.55, -0.62, 0.62), 0.26, 0.12, m["dark_steel"], axis="Y", bevel=0.0)
+    box("air_cooler", (0.55, 0, 1.05), (0.9, 1.0, 0.32), m["dark_steel"], bevel=0.02)
+    # 排气管 + 阀门
+    tube("air_pipe_out", [(-0.55, 0.3, 1.78), (0.1, 0.3, 1.9), (0.6, 0.3, 1.35)], 0.055, m["steel"])
+    cyl("air_valve", (0.62, 0.3, 1.3), 0.08, 0.1, m["warn_yellow"], bevel=0.0)
+    # 控制箱 + 压力表
+    box("air_ctrl", (0.95, 0.75, 1.15), (0.4, 0.2, 0.5), m["paint_dark"], bevel=0.02)
+    cyl("air_gauge", (0.95, 0.62, 1.2), 0.09, 0.05, m["steel"], axis="Y", bevel=0.0)
+    box("air_warn", (-0.55, -0.52, 1.0), (0.3, 0.01, 0.2), m["warn_yellow"], bevel=0.0)
+
+
+def build_aux_pump(m):
+    """冷却泵组：1.6 × 1.4 × 1.4"""
+    box("pump_base", (0, 0, 0.07), (1.5, 1.3, 0.14), m["dark_steel"], bevel=0.02)
+    # 泵体（蜗壳）+ 电机（卧式，轴向 X）
+    cyl("pump_body", (-0.15, 0, 0.45), 0.3, 0.5, m["paint_blue"], axis="X", bevel=0.02)
+    cyl("pump_suction", (-0.15, -0.42, 0.45), 0.1, 0.22, m["steel"], axis="Y", bevel=0.0)
+    cyl("pump_motor", (0.45, 0, 0.45), 0.26, 0.55, m["paint_dark"], axis="X", bevel=0.02)
+    box("pump_coupling", (0.18, 0, 0.45), (0.2, 0.22, 0.22), m["steel"], bevel=0.01)
+    # 进出口管 + 阀门手轮
+    tube("pump_pipe_up", [(-0.15, 0.3, 0.55), (-0.15, 0.3, 1.05), (0.1, 0.3, 1.2)], 0.07, m["steel"])
+    cyl("pump_handwheel", (0.1, 0.3, 1.22), 0.16, 0.03, m["warn_yellow"], bevel=0.0)
+    # 压力表 + 铭牌
+    cyl("pump_gauge", (0.35, 0.28, 0.75), 0.08, 0.05, m["steel"], axis="Y", bevel=0.0)
+    box("pump_plate", (-0.15, -0.31, 0.75), (0.26, 0.01, 0.12), m["warn_yellow"], bevel=0.0)
+
+
 # ---------------------------------------------------------------- 导出
 
 
@@ -280,7 +351,14 @@ def main():
     out_dir = argv[argv.index("--") + 1] if "--" in argv else "frontend/public/models"
     os.makedirs(out_dir, exist_ok=True)
 
-    for name, builder in (("cnc", build_cnc), ("robot", build_robot), ("inspection", build_inspection)):
+    for name, builder in (
+        ("cnc", build_cnc),
+        ("robot", build_robot),
+        ("inspection", build_inspection),
+        ("conveyor", build_conveyor),
+        ("aux_air", build_aux_air),
+        ("aux_pump", build_aux_pump),
+    ):
         reset_scene()
         builder(materials())
         export(name, out_dir)

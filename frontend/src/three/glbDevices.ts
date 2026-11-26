@@ -26,12 +26,32 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { FactoryBuild } from './builders';
 
-/** 只替换这三类；CONVEYOR / AUX 的形体简单、且有滚筒动画，暂留程序化 */
-const MODELS: Record<string, string> = {
-  CNC: 'models/cnc.glb',
-  ROBOT: 'models/robot.glb',
-  INSPECTION: 'models/inspection.glb',
-};
+/**
+ * 设备 ID → 模型。按前缀匹配而不是按设备类型：
+ * AUX 一台空压机、一台冷却泵，形体完全不同，不能共用一个模型。
+ * 输送机（CONV）的滚筒**不在 GLB 里**——`RollerRig` 每帧写实例矩阵做旋转，
+ * GLB 再带一套会双份；所以 conveyor.glb 只建机架/支腿/侧梁/电机/控制盒。
+ */
+const MODELS = {
+  cnc: 'models/cnc.glb',
+  robot: 'models/robot.glb',
+  inspection: 'models/inspection.glb',
+  conveyor: 'models/conveyor.glb',
+  aux_air: 'models/aux_air.glb',
+  aux_pump: 'models/aux_pump.glb',
+} as const;
+
+type ModelKey = keyof typeof MODELS;
+
+function modelKeyOf(deviceId: string): ModelKey | null {
+  if (deviceId.startsWith('CNC')) return 'cnc';
+  if (deviceId.startsWith('ROB')) return 'robot';
+  if (deviceId.startsWith('CONV')) return 'conveyor';
+  if (deviceId.startsWith('INSP')) return 'inspection';
+  if (deviceId.startsWith('AIR')) return 'aux_air';
+  if (deviceId.startsWith('PUMP')) return 'aux_pump';
+  return null;
+}
 
 const BUCKET_MATERIALS = () => ({
   paint: new THREE.MeshStandardMaterial({
@@ -146,10 +166,10 @@ export async function upgradeDevicesWithGlb(build: FactoryBuild): Promise<GlbUpg
   const failed: string[] = [];
 
   await Promise.all(
-    Object.entries(MODELS).map(async ([type, path]) => {
+    Object.entries(MODELS).map(async ([key, path]) => {
       try {
         const gltf = await loader.loadAsync(`${baseUrl}${path}`);
-        loaded.set(type, gltf.scene);
+        loaded.set(key, gltf.scene);
       } catch (error) {
         failed.push(`${path}: ${(error as Error).message}`);
       }
@@ -160,14 +180,8 @@ export async function upgradeDevicesWithGlb(build: FactoryBuild): Promise<GlbUpg
   const result: GlbUpgradeResult = { swapped: 0, skipped: 0, failed, triangles: 0 };
 
   for (const [deviceId, visual] of build.devices) {
-    const type = deviceId.startsWith('CNC')
-      ? 'CNC'
-      : deviceId.startsWith('ROB')
-        ? 'ROBOT'
-        : deviceId.startsWith('INSP')
-          ? 'INSPECTION'
-          : '';
-    const scene = type ? loaded.get(type) : undefined;
+    const key = modelKeyOf(deviceId);
+    const scene = key ? loaded.get(key) : undefined;
     if (!scene) {
       result.skipped += 1;
       continue;
@@ -203,7 +217,7 @@ export async function upgradeDevicesWithGlb(build: FactoryBuild): Promise<GlbUpg
     }
 
     // 机械臂：按枢轴烘焙，挂到同名 Group 上，交给 motion.ts 继续摆
-    if (type === 'ROBOT') {
+    if (key === 'robot') {
       const pivotNode = scene.getObjectByName('arm_pivot');
       if (pivotNode) {
         const arm = bakeScene(scene, pivotNode);
