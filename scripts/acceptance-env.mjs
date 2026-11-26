@@ -17,7 +17,7 @@ import { connect, sleep, check, summarize, WEB } from './lib/cdp.mjs';
 
 const SHOT_DIR = process.argv[2] ?? 'output/env';
 const SCENE_BUDGET = 100;
-const ENV_GROUP_BUDGET = 6;
+const ENV_GROUP_BUDGET = 10; // R1.6：6 个合并组 + 4 个实例化网格（配电柜/托盘/周转箱/气瓶，作者指定 InstancedMesh）
 const MIN_FPS = 50;
 const MIN_LUMA = 6;
 

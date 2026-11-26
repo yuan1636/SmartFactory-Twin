@@ -15,7 +15,7 @@
 
 import { DEVICE_LAYOUT, FACTORY, LINE_STRIPS, POWER_STATION, WORKSHOPS } from './layout';
 import { buildInterior } from './envInterior';
-import { buildSigns } from './propLayout';
+import { buildDensityProps, buildSigns } from './propLayout';
 import type { LineScenario } from './scenario';
 
 export type EnvGroup = 'matte' | 'metal' | 'paint' | 'emissive' | 'glass';
@@ -40,6 +40,12 @@ export interface EnvPart {
    * 触发规则在 envInterior.cutawaySides——这里只是数据标记。
    */
   cut?: string;
+  /**
+   * R1.6 实例化类别标记：带此标记的 part 不进合并网格，由 envBuilder 按
+   * 类别聚合成一个 InstancedMesh（作者指定：配电柜/托盘/周转箱/气瓶各一实例）。
+   * 成员的 sx/sy/sz 是**逐实例缩放**（geometry 是单位体）。
+   */
+  inst?: import('./propLayout').DensityInstKind;
 }
 
 export interface EnvLabelSpec {
@@ -493,6 +499,7 @@ export function buildEnvironment(): EnvironmentResult {
     ...buildOuterProps(),
     ...buildSignPosts(),
     ...buildSafetyItems(),
+    ...buildDensityProps(), // R1.6：密度件（含带 inst 标记的实例化成员）
   ];
   return {
     parts,
@@ -504,6 +511,7 @@ export function buildEnvironment(): EnvironmentResult {
       'outer-racks',
       'sign-posts',
       'safety',
+      'density-props', // R1.6
     ],
   };
 }

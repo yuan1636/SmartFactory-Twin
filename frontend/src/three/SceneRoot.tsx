@@ -397,13 +397,17 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     const pointer = new THREE.Vector2();
     let lastHoverAt = 0;
     const groups = Array.from(build.devices.values()).map((v: DeviceVisual) => v.group);
+    // R1.6：环境层一起进射线——装饰件在设备前面时，可见面是装饰件，
+    // 点击/hover 必须落在装饰件上（返回 null），而不是透到后面的设备。
+    // 剖切掉的墙段是零面积退化三角形，raycast 天然跳过，不影响室外拾取。
+    const pickTargets: THREE.Object3D[] = [...groups, build.envRoot];
 
     const pick = (event: PointerEvent): string | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(groups, true);
+      const hits = raycaster.intersectObjects(pickTargets, true);
       for (const hit of hits) {
         let node: THREE.Object3D | null = hit.object;
         while (node) {
@@ -423,8 +427,10 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       if (id !== hoveredId) {
         hoveredId = id;
         refreshHighlight();
-        renderer.domElement.style.cursor = id ? 'pointer' : 'grab';
       }
+      // R1.6 作者硬规则：装饰件上 hover 必须零反馈——非设备区一律默认箭头。
+      // 无条件写（原来只在 id 变化时写，首帧 hover 装饰件时 cursor 会一直是 auto）。
+      renderer.domElement.style.cursor = id ? 'pointer' : 'default';
     };
 
     let downAt: { x: number; y: number } | null = null;
