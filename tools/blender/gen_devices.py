@@ -104,6 +104,37 @@ def tube(name, points, radius, mat, bevel=0.0):
     return bpy.context.active_object
 
 
+def text(name, body, size, location, mat, rot=None, extrude=0.0022):
+    """立体文字（型号铭牌）：FONT 曲线转 mesh，参与顶点色合并。
+
+    为什么把字做成几何而不是贴一张文字图：
+      合并管线是「所有设备共享一份材质」，贴文字就得给每台设备准备专属贴图或图集；
+      做成几何后文字跟机身一起走顶点色，**draw call 零增加**，近景还有真实的浮雕
+      厚度（0.0022 m 挤出 + 光照打出的高光边），这是任何贴图都给不了的。
+
+    默认旋转 -90°：Blender 的 FONT 在 XY 平面、法线朝 +Z，
+    机床正面朝 -Y，所以要沿 X 轴翻下来，文字才"贴在正面"而不是"躺在地上"。
+    """
+    curve = bpy.data.curves.new(name, "FONT")
+    curve.body = body
+    curve.size = size
+    curve.align_x = "CENTER"
+    curve.align_y = "CENTER"
+    curve.extrude = extrude
+    # 曲线细分默认 12，一个字母就能吃掉 300+ 三角；铭牌字高只有 5 cm，
+    # 屏幕上最大也就 40 像素，细分 3 已经看不出折线，三角数降到 1/3
+    curve.resolution_u = 3
+    obj = bpy.data.objects.new(name, curve)
+    bpy.context.collection.objects.link(obj)
+    obj.location = location
+    obj.rotation_euler = rot if rot else (math.radians(-90), 0, 0)
+    obj.data.materials.append(mat)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.convert(target="MESH")
+    return bpy.context.active_object
+
+
 # ---------------------------------------------------------------- 材质库
 
 
@@ -158,8 +189,15 @@ def build_cnc(m):
     cyl("cnc_lamp_base", (-1.2, 0.6, 2.45), 0.07, 0.14, m["dark_steel"], bevel=0.0)
 
     # 侧面散热格栅：5 条横缝，远看就是"机床的呼吸口"
+    # 原来写在 x=1.52（壳体半宽 1.75），整组埋在壳里看不见——这是 2026-11-26 复看时发现的
     for i in range(5):
-        box(f"cnc_vent_{i}", (1.52, 0.2, 0.55 + i * 0.14), (0.06, 0.9, 0.06), m["dark_steel"], bevel=0.0)
+        box(f"cnc_vent_{i}", (1.76, 0.2, 0.55 + i * 0.14), (0.06, 0.9, 0.06), m["dark_steel"], bevel=0.0)
+
+    # 下部检修门：真实机床正面下半部就是一块带把手的电控柜门。
+    # 这条门缝在中距离比任何法线贴图都更说明"外壳是拼装的钣金"——
+    # 实测只加法线贴图时，4 m 的整块平板仍读作水泥墙，加了门缝才立住。
+    box("cnc_cabinet_door", (-0.3, -1.195, 0.58), (2.0, 0.05, 0.62), m["paint_light"], bevel=0.012)
+    cyl("cnc_cabinet_handle", (0.62, -1.23, 0.58), 0.018, 0.22, m["steel"], axis="Z", bevel=0.0)
 
     # 后部排屑器 + 冷却液箱
     box("cnc_chip_conveyor", (-1.2, 1.35, 0.35), (0.9, 0.9, 0.5), m["dark_steel"], bevel=0.03,
@@ -171,9 +209,15 @@ def build_cnc(m):
     tube("cnc_hose_b", [(0.7, 1.25, 2.0), (1.2, 1.55, 1.7), (1.45, 1.1, 1.35)], 0.028, m["rubber"])
     tube("cnc_cable", [(-0.6, 1.3, 2.0), (0.4, 1.45, 1.6), (1.2, 1.0, 1.2)], 0.022, m["dark_steel"])
 
-    # 警示标与铭牌（薄片，纯色，不占贴图）
-    box("cnc_warn_plate", (-1.55, -1.16, 0.95), (0.28, 0.02, 0.2), m["warn_yellow"], bevel=0.0)
-    box("cnc_nameplate", (-0.9, -1.16, 0.95), (0.5, 0.02, 0.12), m["steel"], bevel=0.0)
+    # 警示标与铭牌：必须贴在壳**外**表面。原值 y=-1.16 而壳体前面在 -1.18，
+    # 等于整块牌埋进壳里（远看只剩一条缝），是照着截图才发现的历史缺陷
+    box("cnc_warn_plate", (-1.55, -1.195, 0.95), (0.28, 0.02, 0.2), m["warn_yellow"], bevel=0.0)
+    # 铭牌 = 钢边 + 浅漆面板。只用纯钢牌时，metal 桶在没有正对光源的角度只能反射
+    # 暗青色的环境，整块牌读作"一块黑膏药"，字反而看不见；浅底深字才是真铭牌的样子
+    box("cnc_nameplate_rim", (-0.9, -1.193, 0.95), (0.52, 0.018, 0.14), m["steel"], bevel=0.0)
+    box("cnc_nameplate", (-0.9, -1.197, 0.95), (0.48, 0.018, 0.11), m["paint_light"], bevel=0.0)
+    # 型号文字：浮雕在面板前面 6 mm 处（面板前面 -1.206），深色字压浅底
+    text("cnc_name_text", "VMC-850", 0.052, (-0.9, -1.214, 0.95), m["paint_dark"])
 
     # 地脚
     for sx in (-1, 1):
@@ -210,6 +254,12 @@ def build_robot(m):
 
     # 底座警示条
     box("rob_warn_band", (0, 0, 0.13), (1.24, 0.06, 0.05), m["warn_yellow"], bevel=0.0)
+
+    # 型号铭牌：做成方形牌座再刻字。直接贴在回转圆柱上会穿模
+    # （0.26 宽的平板搭在 r=0.45 的圆上，两端必然扎进去），垫一块牌座最省事。
+    box("rob_nameplate_rim", (0, -0.44, 0.30), (0.28, 0.03, 0.15), m["steel"], bevel=0.004)
+    box("rob_nameplate", (0, -0.447, 0.30), (0.24, 0.03, 0.11), m["paint_light"], bevel=0.004)
+    text("rob_name_text", "KR-16", 0.05, (0, -0.465, 0.30), m["paint_dark"])
 
     # 摆动枢轴：把大臂及以上的件挂到一个空物体上，导出成独立节点 `arm_pivot`。
     # 前端 motion.ts 只旋转"枢轴组"，几何用的是谁的 mesh 无所谓——换成 GLB 后
@@ -252,6 +302,11 @@ def build_inspection(m):
     # 台面工件夹具 + 警示条
     box("ins_fixture", (0.3, -0.05, 1.18), (0.5, 0.4, 0.1), m["steel"], bevel=0.01)
     box("ins_warn_band", (0, -0.72, 1.02), (2.6, 0.04, 0.06), m["warn_yellow"], bevel=0.0)
+
+    # 台面 T 型槽：三坐标/测量台的标准特征。深色细条嵌在花岗岩面上，
+    # 比刻字更远距离可见，也是"这块板是测量平台"的唯一线索
+    for i in (-1, 0, 1):
+        box(f"ins_slot_{i}", (i * 0.75, 0, 1.128), (0.05, 1.4, 0.02), m["dark_steel"], bevel=0.0)
 
 
 def build_conveyor(m):
@@ -307,6 +362,10 @@ def build_aux_air(m):
     box("air_ctrl", (0.95, 0.75, 1.15), (0.4, 0.2, 0.5), m["paint_dark"], bevel=0.02)
     cyl("air_gauge", (0.95, 0.62, 1.2), 0.09, 0.05, m["steel"], axis="Y", bevel=0.0)
     box("air_warn", (-0.55, -0.52, 1.0), (0.3, 0.01, 0.2), m["warn_yellow"], bevel=0.0)
+    # 排气压力铭牌：贴在主机正面（y=-0.6），钢牌 + 深色浮雕字
+    box("air_nameplate_rim", (0.55, -0.605, 0.72), (0.57, 0.02, 0.15), m["steel"], bevel=0.004)
+    box("air_nameplate", (0.55, -0.611, 0.72), (0.53, 0.02, 0.11), m["paint_light"], bevel=0.004)
+    text("air_name_text", "0.8MPa", 0.05, (0.55, -0.624, 0.72), m["paint_dark"])
 
 
 def build_aux_pump(m):
@@ -323,12 +382,48 @@ def build_aux_pump(m):
     # 压力表 + 铭牌
     cyl("pump_gauge", (0.35, 0.28, 0.75), 0.08, 0.05, m["steel"], axis="Y", bevel=0.0)
     box("pump_plate", (-0.15, -0.31, 0.75), (0.26, 0.01, 0.12), m["warn_yellow"], bevel=0.0)
+    text("pump_name_text", "CP-40", 0.045, (-0.15, -0.322, 0.75), m["paint_dark"])
 
 
 # ---------------------------------------------------------------- 导出
 
 
+def apply_box_uv(obj, scale=1.0):
+    """按主导法线做立方投影 UV：`scale=1` 时 1 UV = 1 米。
+
+    不用 `bpy.ops.uv.cube_project`：headless 下 UV 操作依赖 edit-mode context，
+    Blender 5.x 偶发 poll 失败。手算立方投影二十行，且完全不受版本影响——
+    我们只需要"每个面沿自己最平的那个方向展开"，不需要任何接缝优化。
+
+    法线贴图必须靠 UV 采样，而此前的合并管线把 UV 直接删了（只靠顶点色），
+    所以这一步是"细节贴图"能落地的前置条件，不是可选项。
+    """
+    me = obj.data
+    if not me.polygons:
+        return
+    layer = me.uv_layers.get("UVMap") or me.uv_layers.new(name="UVMap")
+    mw = obj.matrix_world
+    nmat = mw.to_3x3().inverted().transposed()
+    for poly in me.polygons:
+        n = (nmat @ poly.normal).normalized()
+        ax = max(range(3), key=lambda i: abs(n[i]))
+        for li in poly.loop_indices:
+            co = mw @ me.vertices[me.loops[li].vertex_index].co
+            if ax == 0:  # 朝 ±X 的面：用 (y, z)
+                u, v = co.y, co.z
+            elif ax == 1:  # 朝 ±Y：用 (x, z)
+                u, v = co.x, co.z
+            else:  # 朝 ±Z：用 (x, y)
+                u, v = co.x, co.y
+            layer.data[li].uv = (u * scale, v * scale)
+
+
 def export(name, out_dir):
+    # 先给所有网格补立方投影 UV，再导出（glTF 会把 uv 一起写进 GLB）
+    for obj in bpy.data.objects:
+        if obj.type == "MESH":
+            apply_box_uv(obj)
+
     path = os.path.join(out_dir, f"{name}.glb")
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.export_scene.gltf(

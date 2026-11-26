@@ -53,18 +53,83 @@ function modelKeyOf(deviceId: string): ModelKey | null {
   return null;
 }
 
-const BUCKET_MATERIALS = () => ({
+/**
+ * 表面细节贴图（批 4，D-80）。由 `tools/blender/gen_textures.py` 程序化生成，
+ * 4 张 512² PNG，合计约 790 KB。漆面是橘皮+喷塑颗粒，金属是拉丝条纹。
+ *
+ * 为什么自己生成：项目要求资产可复现、无版权争议；而且这些贴图必须配合
+ * Blender 侧的立方投影 UV（1 UV = 1 米）才能保证颗粒尺度是物理正确的。
+ */
+const DETAIL = {
+  paint: {
+    normal: 'models/tex/paint_normal.png',
+    rough: 'models/tex/paint_rough.png',
+    dirt: 'models/tex/paint_dirt.png',
+  },
+  metal: {
+    normal: 'models/tex/metal_normal.png',
+    rough: 'models/tex/metal_rough.png',
+    dirt: 'models/tex/metal_dirt.png',
+  },
+} as const;
+
+/**
+ * 法线与粗糙度用**两个不同的重复率**，这不是随意定的：
+ *
+ * - 法线贴图讲的是毫米级细节（橘皮 3 mm、喷塑颗粒 1 mm），必须高频重复才不糊成一片；
+ *   但高频细节在 10 m 外小于一个像素，会被 mipmap 平均掉——这是物理正确的，
+ *   真实车间远看也看不出喷塑颗粒。
+ * - 粗糙度贴图承担的是"脏污 / 磨损"这类**分米级**变化，它不会被 mipmap 抹平，
+ *   所以远看仍有信息。要让它出现得足够大，repeat 必须小。
+ *
+ * 结论：normal 高重复（细节），rough 低重复（脏污）。两者各用各的。
+ */
+const NORMAL_REPEAT = 6;
+const ROUGH_REPEAT = 0.7;
+/**
+ * 色差乘子要铺得比粗糙度**更开**：它的作用是让相邻面板互不相同。
+ * 一张 512² 压住约 2.2 m，正好覆盖一台机床的立面，重复感最弱。
+ */
+const DIRT_REPEAT = 0.45;
+
+interface DetailMaps {
+  normal: THREE.Texture;
+  rough: THREE.Texture;
+  dirt: THREE.Texture;
+}
+
+type DetailKey = keyof typeof DETAIL;
+
+const BUCKET_MATERIALS = (detail: Partial<Record<DetailKey, DetailMaps>>) => ({
   paint: new THREE.MeshStandardMaterial({
     vertexColors: true,
-    roughness: 0.44,
+    // 有 roughnessMap 时必须把标量粗糙度交出去（设为 1，让贴图直接决定），
+    // 否则两者相乘会得到一个凭空变光滑的漆面
+    roughness: detail.paint ? 1.0 : 0.44,
     metalness: 0.12,
     envMapIntensity: 0.95,
+    ...(detail.paint
+      ? {
+          map: detail.paint.dirt,
+          normalMap: detail.paint.normal,
+          normalScale: new THREE.Vector2(0.45, 0.45),
+          roughnessMap: detail.paint.rough,
+        }
+      : {}),
   }),
   metal: new THREE.MeshStandardMaterial({
     vertexColors: true,
-    roughness: 0.3,
+    roughness: detail.metal ? 1.0 : 0.3,
     metalness: 0.95,
     envMapIntensity: 1.15,
+    ...(detail.metal
+      ? {
+          map: detail.metal.dirt,
+          normalMap: detail.metal.normal,
+          normalScale: new THREE.Vector2(0.4, 0.4),
+          roughnessMap: detail.metal.rough,
+        }
+      : {}),
   }),
   glass: new THREE.MeshStandardMaterial({
     vertexColors: true,
@@ -84,6 +149,43 @@ function bucketOf(material: THREE.Material): Bucket {
   if ((m as THREE.Material).transparent && (m.opacity ?? 1) < 0.9) return 'glass';
   if ((m.metalness ?? 0) > 0.55) return 'metal';
   return 'paint';
+}
+
+/** 贴图缺失只降级成"没有细节"，绝不影响模型本体（不能因为一张 PNG 白屏）。 */
+async function loadDetailMaps(baseUrl: string): Promise<Partial<Record<DetailKey, DetailMaps>>> {
+  const loader = new THREE.TextureLoader();
+  const prep = (tex: THREE.Texture, repeat: number) => {
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(repeat, repeat);
+    // 法线与粗糙度都是非颜色数据。一旦按 sRGB 解码，法线会被 gamma 抬高、
+    // 光照方向整体偏掉（表现为表面浮一层蓝紫噪点），这个必须显式设。
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+  };
+
+  const out: Partial<Record<DetailKey, DetailMaps>> = {};
+  await Promise.all(
+    (Object.keys(DETAIL) as DetailKey[]).map(async (key) => {
+      try {
+        const [normal, rough, dirt] = await Promise.all([
+          loader.loadAsync(`${baseUrl}${DETAIL[key].normal}`),
+          loader.loadAsync(`${baseUrl}${DETAIL[key].rough}`),
+          loader.loadAsync(`${baseUrl}${DETAIL[key].dirt}`),
+        ]);
+        out[key] = {
+          normal: prep(normal, NORMAL_REPEAT),
+          rough: prep(rough, ROUGH_REPEAT),
+          dirt: prep(dirt, DIRT_REPEAT),
+        };
+      } catch (error) {
+        console.warn(`[glb] 贴图缺失，${key} 退回纯色：`, (error as Error).message);
+      }
+    }),
+  );
+  return out;
 }
 
 /**
@@ -115,11 +217,17 @@ function bakeScene(scene: THREE.Object3D, relativeTo?: THREE.Object3D) {
     const color = (src as THREE.MeshStandardMaterial).color ?? new THREE.Color(0xffffff);
 
     const geo = mesh.geometry.clone();
-    // 合并的前提是属性集合一致：UV 我们不用（几何靠顶点色），法线保留，切线丢掉
+    // 合并的前提是属性集合一致：position / normal / color / uv 保留，切线丢掉
+    // （法线贴图在没有切线属性时，three 会在片元里用 UV 推导切线，够用）
     for (const name of Object.keys(geo.attributes)) {
-      if (!['position', 'normal', 'color'].includes(name)) geo.deleteAttribute(name);
+      if (!['position', 'normal', 'color', 'uv'].includes(name)) geo.deleteAttribute(name);
     }
     if (!geo.attributes.normal) geo.computeVertexNormals();
+    if (!geo.attributes.uv) {
+      // 少数件（曲线转网格的软管）可能没 UV。补零 UV，而不是跳过——
+      // 属性集不一致会让 mergeGeometries 直接返回 null，整台设备就没了。
+      geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 2), 2));
+    }
     geo.applyMatrix4(new THREE.Matrix4().multiplyMatrices(base, mesh.matrixWorld));
 
     const count = geo.attributes.position.count;
@@ -165,7 +273,7 @@ export async function upgradeDevicesWithGlb(build: FactoryBuild): Promise<GlbUpg
   const loaded = new Map<string, THREE.Group>();
   const failed: string[] = [];
 
-  await Promise.all(
+  const [detail] = await Promise.all([loadDetailMaps(baseUrl), Promise.all(
     Object.entries(MODELS).map(async ([key, path]) => {
       try {
         const gltf = await loader.loadAsync(`${baseUrl}${path}`);
@@ -174,9 +282,9 @@ export async function upgradeDevicesWithGlb(build: FactoryBuild): Promise<GlbUpg
         failed.push(`${path}: ${(error as Error).message}`);
       }
     }),
-  );
+  )]);
 
-  const materials = BUCKET_MATERIALS();
+  const materials = BUCKET_MATERIALS(detail);
   const result: GlbUpgradeResult = { swapped: 0, skipped: 0, failed, triangles: 0 };
 
   for (const [deviceId, visual] of build.devices) {

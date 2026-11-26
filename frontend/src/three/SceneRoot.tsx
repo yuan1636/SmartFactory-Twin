@@ -870,6 +870,31 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         env: () => ({ kinds: build.envKinds, drawables: build.envDrawables }),
         lineMotion: () => motion.snapshot(),
         setCamera: (pose: CameraPose) => moveTo(pose, DUR_SETCAM),
+        /**
+         * 材质探针：查一台设备实际拿到的贴图与参数。
+         * 细节贴图这类改动"看不出效果"时，靠截图猜是没有意义的——要么贴图没挂上，
+         * 要么挂上了但强度不够。这个方法一次性把两者区分开（D-80 验收用）。
+         */
+        materialProbe: (deviceId: string) => {
+          const visual = build.devices.get(deviceId);
+          if (!visual) return null;
+          return visual.group.children
+            .filter((c): c is THREE.Mesh => (c as THREE.Mesh).isMesh)
+            .map((m) => {
+              const mat = m.material as THREE.MeshStandardMaterial;
+              return {
+                name: m.name,
+                hasUv: !!m.geometry.attributes.uv,
+                map: mat.map ? `${mat.map.image?.width ?? '?'}x${mat.map.image?.height ?? '?'}` : null,
+                mapRepeat: mat.map ? mat.map.repeat.toArray() : null,
+                normal: !!mat.normalMap,
+                normalScale: mat.normalScale ? mat.normalScale.toArray() : null,
+                roughMap: !!mat.roughnessMap,
+                rough: mat.roughness,
+                metal: mat.metalness,
+              };
+            });
+        },
         /** 后处理参数读数：D1 验收逐项比对规格 §6.1 的表 */
         postfx: () => postfx.describe(),
         /** 原子读四项开销：整链 / 场景 / 阴影 / 后处理（加不回总数就说明统计有漏） */
