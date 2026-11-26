@@ -1,6 +1,6 @@
 /** 页面四：设备告警与维护（规格 5.5，偏差 D-01 新增页）。 */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DataTable, type Column } from '../components/DataTable';
 import { ErrorState } from '../components/ErrorState';
 import { MetricCard } from '../components/MetricCard';
@@ -35,6 +35,9 @@ const MAINTENANCE_LABEL: Record<MaintenanceType, string> = {
 
 type ResolvedFilter = '' | 'false' | 'true';
 
+/** 告警列表每页条数（作者 2026-11-26 要求：默认只展示最近 10 条，其余翻页看）。 */
+const ALARM_PAGE_SIZE = 10;
+
 /** datetime-local 给的是本地时间字符串，后端要带时区，统一转 ISO。 */
 function toIso(local: string): string {
   return new Date(local).toISOString();
@@ -44,6 +47,7 @@ export default function Alerts() {
   const [deviceId, setDeviceId] = useState('');
   const [level, setLevel] = useState('');
   const [resolvedFilter, setResolvedFilter] = useState<ResolvedFilter>('false');
+  const [alarmPage, setAlarmPage] = useState(1);
   const [resolving, setResolving] = useState<number | null>(null);
 
   const [formDevice, setFormDevice] = useState('');
@@ -68,14 +72,14 @@ export default function Alerts() {
   const alarms = usePolling<Page<AlarmItem>>(
     () =>
       apiGet<Page<AlarmItem>>('/alarms', {
-        page: 1,
-        page_size: 50,
+        page: alarmPage,
+        page_size: ALARM_PAGE_SIZE,
         device_id: deviceId || undefined,
         alarm_level: level || undefined,
         resolved: resolvedFilter === '' ? undefined : resolvedFilter === 'true',
       }),
     10_000,
-    { key: `${deviceId}|${level}|${resolvedFilter}` },
+    { key: `${deviceId}|${level}|${resolvedFilter}|${alarmPage}` },
   );
 
   const maintenance = usePolling<Page<MaintenanceItem>>(
@@ -87,6 +91,14 @@ export default function Alerts() {
     () => alarmLevelCounts(openAlarms.data?.items ?? []),
     [openAlarms.data],
   );
+
+  // 翻页：total 来自服务端，不受 page_size 影响；页码超出总页数时（筛选后条数变少）回第 1 页
+  const alarmTotal = alarms.data?.total ?? 0;
+  const alarmPageCount = Math.max(1, Math.ceil(alarmTotal / ALARM_PAGE_SIZE));
+  useEffect(() => {
+    if (alarms.data && alarms.data.items.length === 0 && alarmPage > 1) setAlarmPage(1);
+  }, [alarms.data, alarmPage]);
+  const gotoAlarmPage = (p: number) => setAlarmPage(Math.min(Math.max(1, p), alarmPageCount));
 
   const onResolve = async (alarmId: number) => {
     setResolving(alarmId);
@@ -235,7 +247,14 @@ export default function Alerts() {
         <div className="card__title-row">
           <h3 className="card__title">告警列表</h3>
           <div className="toolbar" style={{ marginLeft: 'auto' }}>
-            <select className="select" value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
+            <select
+              className="select"
+              value={deviceId}
+              onChange={(e) => {
+                setDeviceId(e.target.value);
+                setAlarmPage(1); // 筛选变了，旧页码多半超出新的总页数
+              }}
+            >
               <option value="">全部设备</option>
               {(devices.data?.items ?? []).map((d) => (
                 <option key={d.device_id} value={d.device_id}>
@@ -243,7 +262,14 @@ export default function Alerts() {
                 </option>
               ))}
             </select>
-            <select className="select" value={level} onChange={(e) => setLevel(e.target.value)}>
+            <select
+              className="select"
+              value={level}
+              onChange={(e) => {
+                setLevel(e.target.value);
+                setAlarmPage(1);
+              }}
+            >
               <option value="">全部等级</option>
               <option value="CRITICAL">CRITICAL</option>
               <option value="WARNING">WARNING</option>
@@ -251,7 +277,10 @@ export default function Alerts() {
             <select
               className="select"
               value={resolvedFilter}
-              onChange={(e) => setResolvedFilter(e.target.value as ResolvedFilter)}
+              onChange={(e) => {
+                setResolvedFilter(e.target.value as ResolvedFilter);
+                setAlarmPage(1);
+              }}
             >
               <option value="false">未解除</option>
               <option value="true">已解除</option>
@@ -270,6 +299,49 @@ export default function Alerts() {
             empty={resolvedFilter === 'false' ? '当前没有未解除告警' : '没有匹配的告警'}
           />
         )}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            marginTop: 10,
+            fontSize: 12,
+          }}
+        >
+          <span className="muted">
+            共 {formatNumber(alarmTotal)} 条 · 第 {alarmPage} / {formatNumber(alarmPageCount)} 页 · 每页{' '}
+            {ALARM_PAGE_SIZE} 条
+          </span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button type="button" className="btn" disabled={alarmPage <= 1} onClick={() => gotoAlarmPage(1)}>
+              首页
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={alarmPage <= 1}
+              onClick={() => gotoAlarmPage(alarmPage - 1)}
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={alarmPage >= alarmPageCount}
+              onClick={() => gotoAlarmPage(alarmPage + 1)}
+            >
+              下一页
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={alarmPage >= alarmPageCount}
+              onClick={() => gotoAlarmPage(alarmPageCount)}
+            >
+              末页
+            </button>
+          </div>
+        </div>
         <div className="card__footnote">
           解除按 G-10 决定设备状态：该设备还有其它未解除告警时保持 ALARM，清零后才回 RUNNING。共{' '}
           {formatNumber(alarms.data?.total ?? 0)} 条符合筛选。
