@@ -569,7 +569,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       const dt = frozen ? 0 : Math.max(0, t - prevT);
       prevT = t;
 
-      // 入场优先：绕场球面插值（方位角/半径/高度分别缓动），终点与 overview 预设重合
+      // 入场优先：绕场球面插值（方位角/半径/高度分别缓动），终点与 overview 预设重合。
+      // 球心 = ENTRANCE_START.target（overview 的 target）：总览机位平移后球心不再是原点。
       if (entrance.active) {
         const elapsed = performance.now() - entrance.start;
         const progress = Math.min(1, elapsed / DUR_ENTRANCE);
@@ -577,7 +578,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         const azimuth = ENTRANCE_PATH.azimuth0 + (ENTRANCE_PATH.azimuth1 - ENTRANCE_PATH.azimuth0) * eased;
         const radius = ENTRANCE_PATH.radius0 + (ENTRANCE_PATH.radius1 - ENTRANCE_PATH.radius0) * eased;
         const height = ENTRANCE_PATH.height0 + (ENTRANCE_PATH.height1 - ENTRANCE_PATH.height0) * eased;
-        camera.position.set(Math.sin(azimuth) * radius, height, Math.cos(azimuth) * radius);
+        const [cx, , cz] = ENTRANCE_START.target;
+        camera.position.set(cx + Math.sin(azimuth) * radius, height, cz + Math.cos(azimuth) * radius);
         controls.target.set(...ENTRANCE_START.target);
         if (progress >= 1) {
           entrance.active = false;

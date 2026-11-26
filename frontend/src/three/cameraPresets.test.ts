@@ -72,25 +72,33 @@ describe('cameraPresets（D3）', () => {
   });
 
   // ---- D 批（车间室内化）新增约束 ----
-  it('D 批：轨道上限收到 72，总览机位退到 [0,36,46]', () => {
+  it('D 批：轨道上限收到 72；总览机位 [4,36,46]（作者 2026-11-26：初始视角整体左移 4）', () => {
     expect(ORBIT_LIMITS.maxDistance).toBe(72);
-    expect(CAMERA_PRESETS.overview.position).toEqual([0, 36, 46]);
+    expect(CAMERA_PRESETS.overview.position).toEqual([4, 36, 46]);
+    // 纯取景平移：position 与 target 的 x 必须同步偏移，否则俯仰角变了
+    expect(CAMERA_PRESETS.overview.target[0]).toBe(CAMERA_PRESETS.overview.position[0]);
   });
 
   it('D 批：入场终点参数 = 总览机位（否则入场停在 overview 旁边，验收的"终点位姿"会失败）', () => {
     const [x, y, z] = CAMERA_PRESETS.overview.position;
+    const [cx, , cz] = CAMERA_PRESETS.overview.target;
     expect(ENTRANCE_PATH.azimuth1).toBe(0);
-    expect(ENTRANCE_PATH.radius1).toBeCloseTo(Math.hypot(x, z), 6);
+    // 半径按"到球心的水平距离"算（球心 = target，不再一定是原点）
+    expect(ENTRANCE_PATH.radius1).toBeCloseTo(Math.hypot(x - cx, z - cz), 6);
     expect(ENTRANCE_PATH.height1).toBe(y);
-    // 终点按渲染用的球面公式回算，必须落回 overview
-    expect(Math.sin(ENTRANCE_PATH.azimuth1) * ENTRANCE_PATH.radius1).toBeCloseTo(x, 6);
-    expect(Math.cos(ENTRANCE_PATH.azimuth1) * ENTRANCE_PATH.radius1).toBeCloseTo(z, 6);
+    // 终点按渲染用的球面公式回算（球心 + sin/cos * r），必须落回 overview
+    expect(cx + Math.sin(ENTRANCE_PATH.azimuth1) * ENTRANCE_PATH.radius1).toBeCloseTo(x, 6);
+    expect(cz + Math.cos(ENTRANCE_PATH.azimuth1) * ENTRANCE_PATH.radius1).toBeCloseTo(z, 6);
   });
 
   it('D 批：入场起点 = 球面参数算出来的点（起点与路径不一致会导致首帧跳一下）', () => {
     const [x, y, z] = ENTRANCE_START.position;
-    expect(Math.sin(ENTRANCE_PATH.azimuth0) * ENTRANCE_PATH.radius0).toBeCloseTo(x, 1);
+    const [cx, , cz] = ENTRANCE_START.target;
+    expect(cx + Math.sin(ENTRANCE_PATH.azimuth0) * ENTRANCE_PATH.radius0).toBeCloseTo(x, 1);
     expect(ENTRANCE_PATH.height0).toBe(y);
-    expect(Math.cos(ENTRANCE_PATH.azimuth0) * ENTRANCE_PATH.radius0).toBeCloseTo(z, 1);
+    expect(cz + Math.cos(ENTRANCE_PATH.azimuth0) * ENTRANCE_PATH.radius0).toBeCloseTo(z, 1);
+    // 起点到球心的距离必须 < maxDistance，否则第一帧被 OrbitControls 夹回
+    const d = Math.hypot(x - cx, y - ENTRANCE_START.target[1], z - cz);
+    expect(d).toBeLessThan(ORBIT_LIMITS.maxDistance);
   });
 });

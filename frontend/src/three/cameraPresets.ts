@@ -21,7 +21,10 @@ export const DEFAULT_FOV = 60;
  * LINE-A1：单条产线近景，斜上方看向整条 A1。
  */
 export const CAMERA_PRESETS = {
-  overview: { position: [0, 36, 46], target: [0, 0, 0] },
+  // 作者 2026-11-26：「初始视角整体再左移一点，目前位置偏右」。整机位沿 +x 平移 4
+  // （position 与 target 同加，保持俯仰角不变、纯取景平移，画面内容左移约 5%）。
+  // 入场球心 = 该 target，见 ENTRANCE_START/ENTRANCE_PATH 的注释。
+  overview: { position: [4, 36, 46], target: [4, 0, 0] },
   // ---- R1.5 A 层：人视机位（作者指定）----
   // WALK：人眼高度 1.68 m，站在 LINE-A1 起点（线西端 x=-34），视线朝 +x 沿产线纵深。
   // FOV 72：产线纵深方向的透视夸张，站在原地看不完厂区边界才算尺度对了。
@@ -52,18 +55,19 @@ export function focusPose(x: number, z: number): CameraPose {
 
 /**
  * D3 入场起点：场外西南上方（方位角 -72°、水平半径 47、高 46）。
+ * 球心 = target（作者 2026-11-26 要求总览视角整体左移后，target 从原点平移到 (4,0,0)），
+ * 起点位置也随球心平移：[-44.7+4, 46, 14.5]。
  * 两处硬约束别改坏：
- *  - 距原点 65.8 < ORBIT_LIMITS.maxDistance 72，否则第一帧就会被 OrbitControls 夹回 72；
- *    （D 批把 maxDistance 从 90 收到 72，起点也跟着收，否则入场第一帧就被夹、看着像瞬移）
+ *  - 起点到球心的距离 65.8 < ORBIT_LIMITS.maxDistance 72，否则第一帧就会被 OrbitControls 夹回 72；
  *  - 高度 46 保住俯角，入场全程不与设备包围盒相交。
  */
 export const ENTRANCE_START: CameraPose = {
-  position: [-44.7, 46, 14.5],
-  target: [0, 0, 0],
+  position: [-40.7, 46, 14.5],
+  target: [4, 0, 0],
 };
 
 /**
- * 入场的球面插值参数：方位角 -72°→0°、水平半径 47→46、高度 46→36（终点即 overview）。
+ * 入场的球面插值参数（相对球心）：方位角 -72°→0°、水平半径 47→46、高度 46→36（终点即 overview）。
  * radius1 / height1 **必须**与 overview 预设一致（`cameraPresets.test.ts` 有断言），
  * 否则入场停在 overview 旁边，验收的"终点位姿 = overview"会失败。
  */
