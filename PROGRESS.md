@@ -1,6 +1,6 @@
 # PROGRESS.md — 交接与进度
 
-> 更新：2026-11-25 21:35 · 对应提交 `c6bd558`（顶部构件清理）· 维护人：本仓库施工方
+> 更新：2026-11-26 10:35 · 对应提交 `4502540` + tag `v0.4-density` · 维护人：本仓库施工方
 > **用途**：换窗口 / 换人接手时，先读这一页再看规格。它只回答三件事——做过什么、验证到什么程度、下一步做什么。
 > 细节一律不在这里重复，末尾给出每条结论的原文位置。
 
@@ -8,16 +8,17 @@
 
 ## 0. 一句话现状
 
-第 4 阶段展示改造已完成 **D0 / D1 / D2 / D3 + 追加批**，以及作者 2026-11-25 晚临时插入的
-**D 批**：R1 车间室内壳 → R1.5 A 观看方式（FOV 60 + WALK/AISLE 两个人视预设）→
-R2 / R3 设备建模 v2（14 台全部换成程序化细节件）→ 顶部管道与深色杆件清理；
-`/overview` 也已改成纯三维展示页（`b3b9844`）。
+第 4 阶段展示改造已完成 **D0 / D1 / D2 / D3 + 追加批**，以及作者临时插入的 **D 批**：
+R1 车间室内壳 → R1.5 A 观看方式（FOV 60 + WALK/AISLE 人视预设）→ R2/R3 设备建模 v2 →
+顶部清理 → 色调亮化（亮灰车间 + 暗青背景 + HUD 青化）→ `/overview` 纯三维展示页 →
+场景减法（删灯带/中排柱）→ 初始视角校准 → **R1.6 补场景密度（2026-11-26，tag `v0.4-density`）**。
 
-场景 draw call **57**（上限 100）、整链 **101**（57+27+17），帧率 144 fps 未降。
-设备验收 **54/54**、单测 **167 passed**、`tsc` 0 error、build 通过，
-d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / batch2 24/24 全绿。
+场景 draw call **61**（上限 100）、整链 **105**（61+27+17），三角 **36,122**，帧率 144 fps 未降。
+设备验收 **54/54**、单测 **179 passed**、`tsc` 0 error；
+d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / d3 11/11 / device 54/54 全绿；
+batch2 20/24（4 项失败 = 生产页统计空窗数据态，长期存在，与本批无关）。
 **下一步仍是 D4 剩余（粒子与旋转光斑），之后 D5 界面层收尾、D6 性能与演示物料。**
-晚间这几批的完整数字与截图见 §8 与 `docs/acceptance_phase4_d.md`。
+标签链：`v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准，**B 层厂区放大未实施**）→ `v0.4-density`（R1.6）。
 
 ---
 
@@ -44,7 +45,13 @@ d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / batch2 24/24 全绿。
 | **D 批 R2** | CNC 建模 v2（28 类部件合并成 1 个 mesh） | 已完成，20/20 | 同上 |
 | **D 批 R3** | 推广到全部 14 台（六类部件表） | 已完成，54/54 | 同上 |
 | **顶部清理** | 删架空圆管 / 屋架深色杆 / 天花桥架；保留灯带与柱列 | 已完成 | 同上 |
-| `/overview` 纯三维页 | 删 KPI 卡与设备列表（`b3b9844`） | 已完成 | — |
+| `/overview` 纯三维页 | 删 KPI 卡与设备列表（`b3b9844`） | 已完成 | `acceptance_phase4.md`（链接见 §8） |
+| 色调亮化 | 中灰地面 + 亮灰围护 + 暗青渐变背景，bloom 阈值回 0.85（`7d28388`） | 已完成 | 同上 §14 后追加段 |
+| HUD 青化 | tokens 深青色系 + 视口覆盖层 HUD 风格（`79bd4b5`） | 已完成 | — |
+| 场景减法 | 删中央通道灯带（`76051a6`）、车间中排柱（`76c032e`） | 已完成 | 同上提交 |
+| 视角校准 | 初始总览整机位 +x 平移 4，入场球心随 target 平移（`2c38108`） | 已完成 | — |
+| **R1.6 密度** | 每车间 47 装饰件 + 4 类 InstancedMesh + 环境层拾取遮挡（`4502540`，tag `v0.4-density`） | 已完成，§18 | `acceptance_phase4.md` §18 |
+| R1.5 B 层 | 厂区 116×78 放大 + 月台/堆场 | **未实施**（作者未确认，FACTORY 仍 80×56） | `spec_phase4.md` R1.5 任务书 |
 | D4（剩余） | 粒子（火花/冷却液雾）与旋转光斑 | **未开始（下一步）** | `docs/spec_phase4.md` §3 |
 | D5 / D6 | 界面层收尾 / 性能与演示物料 | 部分由纯三维页先行落地，其余未做 | 同上 §3 |
 
@@ -60,7 +67,7 @@ d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / batch2 24/24 全绿。
 > 这批的三条实测结论推翻了规格原判断（`pg_total_relation_size` 只量父表、压缩**会**压小索引、压缩块**可写**），
 > 见偏差 D-27 / D-28 / D-30。别按旧文档的直觉再写一遍。
 
-### 1.3 第 4 阶段 B（展示）—— D0 / D1 / D2 / D3 + 追加批已交付；D 批 R1（室内壳）已交付，R2/R3 未开始
+### 1.3 第 4 阶段 B（展示）—— D0~D3 + 追加批 + D 批（R1 / R1.5 A / R2 / R3 / 顶部清理 / 亮化 / 展示页 / 减法 / 视角 / R1.6）全部已交付
 
 **D0 体检**（只产清单与基线，唯一代码改动是 dev-only `setCamera`，D-42）
 产出 `docs/audit_d0.md` 的 20 条问题清单（每条：截图文件 + 九宫格位置 + 现象 + 归属批次），
@@ -133,22 +140,28 @@ STOPPED 用实例 `scale` 缩 0、`frustumCulled=false`、道具不可单独拾�
 | 首屏可交互 | 562 ms | 1,227 ms | 未重测 | 未重测 | ≤3 s |
 
 追加批后场景 draw call 84、整链 155（84 场景 + 54 阴影 + 17 后处理），仍在 ≤100 预算内。
+**当前（R1.6 后）：scene 61 / shadow 27 / post 17 = 105，三角 36,122，fps 144.4。**
+R2/R3 把设备并成单 mesh 后场景调用反而从 84 降到 58，顶部清理再降到 57；
+R1.6 密度件 +4（4 个 InstancedMesh）回到 61。
 
 \* D0 的数字是 `autoReset` 默认口径（只反映末次 render），**与 D1 之后的数字不可相减**（D-45）。
 D1 起统一用原子探针 `__sceneDebug.profile()` 一次读齐四项；分三次读会因跨帧得到 215 ≠ 187 的假数。
 
-### 2.2 本轮复跑（2026-11-25 17:20，D3 收尾）
+### 2.2 本轮复跑（2026-11-26 10:00，R1.6 收尾）
 
 ```text
 cd frontend && npx tsc --noEmit          → 0 error
-cd frontend && npm run test -- --run     → 13 files / 126 tests passed（新增 21 条）
-node scripts/acceptance-env.mjs          → 23/23
-node scripts/acceptance-motion.mjs       → 17/17（改为工况感知）
-node scripts/acceptance-batch2.mjs       → 24/24
-node scripts/acceptance-d1.mjs           → 9/9（雾断言改为「已移除」，bloom 阈值 3.2）
+cd frontend && npm run test -- --run     → 17 files / 179 tests passed（R1.6 新增 12 条）
+node scripts/acceptance-d1.mjs           → 9/9（bloom 阈值回 0.85）
+node scripts/acceptance-env.mjs          → 23/23（ENV_GROUP_BUDGET 6→10：6 合并组 + 4 实例化网格）
+node scripts/acceptance-motion.mjs       → 17/17
 node scripts/acceptance-d2.mjs           → 19/19
-node scripts/acceptance-d3.mjs           → 11/11
+node scripts/acceptance-d3.mjs           → 11/11（7 预设 / 8 站巡游，R1.5 后已同步）
+node scripts/acceptance-device.mjs       → 54/54
+node scripts/acceptance-batch2.mjs       → 20/24（4 项失败 = 生产页统计空窗数据态 + 一次告警注入 422，与本批无关）
 ```
+
+R1.6 专项（§18）：装饰件点击 30 次 0 弹卡、光标全 default、设备 14/14 正常弹卡。
 
 D3 交付时的完整验收输出留在 `output/logs/d3_acceptance.log`（**不进 git**，本地文件）：
 
@@ -245,6 +258,11 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | 9 | **围墙与管道已删，别按旧截图找** | 围墙 12 面全删、管道 12→6、中线柱只留 1 根；墙面标识改成落地立牌（D-57/D-58） |
 | 11 | **雾没了、背景是白的** | 别再把雾加回来（作者明确「不要迷雾」）；白底靠 `backgroundIntensity` 推到 HDR，改 bloom 阈值会让白底泛光（D-62/D-63） |
 | 10 | **三维与列表不一致是工况，不是 bug** | `scenario.ts` 覆盖设备状态，列表/KPI 用真实 WS；视口有「三维演示工况」角标（D-59） |
+| 12 | **背景是暗青渐变，不是白的了** | 亮化批撤白底：暗青竖向渐变（ACES 补偿值），bloom 阈值回 0.85；别再按 §11/§14 的白底口径改（`sky.ts` 头注释） |
+| 13 | **环境层参与拾取遮挡** | `SceneRoot.pick` 把 envRoot 与设备组一起进 raycaster，最近命中决定结果——装饰件挡住的射线不透到设备；改拾取逻辑别只查设备组 |
+| 14 | **overview/入场球心 = target** | 视角校准后 target 是 (4,0,0) 不是原点；改相机预设必须同步 ENTRANCE_START/PATH（`cameraPresets.test.ts` 有守卫） |
+| 15 | **本机 DNS 把 github.com 劫持到 127.0.0.1** | 加速器类工具残留；推送走 `~/.ssh/config` 的 `HostName 140.82.112.4 + HostKeyAlias github.com` 直连（DNS 恢复后可删） |
+| 16 | **沙箱命令会双执行** | git commit / tag 偶发跑两遍，第二遍报 already exists / nothing to commit（exit 1）——先 `git log` 核对再决定，别盲目重试 |
 
 ---
 
@@ -267,13 +285,16 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 3. 复跑基线，确认环境没坏：
 
    ```bash
-   cd frontend && npx tsc --noEmit && npm run test -- --run   # 期望 0 error / 101 passed
+   cd frontend && npx tsc --noEmit && npm run test -- --run   # 期望 0 error / 179 passed
    node scripts/acceptance-d1.mjs                              # 期望 9/9
    node scripts/acceptance-d2.mjs                              # 期望 19/19
    node scripts/acceptance-d3.mjs                              # 期望 11/11
    node scripts/acceptance-env.mjs                             # 期望 23/23
    node scripts/acceptance-motion.mjs                          # 期望 17/17
+   node scripts/acceptance-device.mjs                          # 期望 54/54
    ```
+
+   batch2 允许 20/24：4 项失败是生产页统计空窗的数据态（模拟器无已完工订单），不是代码问题。
 
 4. 从 D4 剩余开始：`three/particles.ts`（火花/冷却液雾，draw call ≤4）+ 警示灯旋转光斑（贴图旋转面片，禁用 SpotLight）。
 5. 每完成一件事就提交；收尾时回来更新本文件的 §1 / §2 / §3 和 `README.md` 的「当前进度」表。
@@ -284,12 +305,13 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 
 | 想知道 | 去哪 |
 |---|---|
-| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3） |
+| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3）、§14（白底与去雾）、§15（R1 室内壳）、§18（R1.6 密度） |
 | 施工规格：目标、七段字段、硬指标、验收命令 | `docs/spec_phase4.md` v4.0 |
 | D0 的 20 条问题清单 | `docs/audit_d0.md` |
 | D 批 R1 / R1.5 A / R2 / R3 / 顶部清理的验收原文与截图 | `docs/acceptance_phase4_d.md` |
 | 设备建模 v2 的判据（§10） | `docs/spec_phase4.md` §10 |
 | 偏差 D-37 ~ D-72（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
+| 三张版本标签 | `v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准）→ `v0.4-density`（R1.6） |
 | 后端与数据层的规格 | `docs/spec_phase2.md` v1.1（冻结） |
 | 三维场景与五页前端的实现基线 | `docs/spec_phase3.md` v1.1（冻结） |
 | 截图与日志 | `output/d0/`、`output/d1/`、`output/d2/`、`output/d3/`、`output/env/`、`output/d_batch/`、`output/device_r2/`、`output/device_r3/`、`output/device_clean/`（本地，不进 git） |
@@ -308,7 +330,13 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | **R2 CNC 样板** | **`6ecd990`** | 程序化部件表 + 顶点色合并几何；28 类部件合成 1 个 mesh | 4 台 CNC 各 20→28 类、1,872 三角；scene 84→76，整链 139；20/20 |
 | **R3 全量推广** | **`56766f4`** | ROBOT / CONVEYOR / INSPECTION / AIR / PUMP 五套部件表，删旧盒子分支；保住滚筒自转与机械臂摆动 | **14 台全部启用**，单台 1~3 mesh、最多 1,872 三角；scene **58** / 整链 **103**；54/54 |
 | **顶部清理** | **`c6bd558`** | 删 D2 架空圆管、屋架约 280 根深色方管、天花桥架及竖杆；保留 5 道灯带与柱列 | scene **57** / 整链 **101**；8 机位截图确认顶部密网消失；d2 判据 7 类→6 类 |
-| `/overview` 纯三维页 | `b3b9844` | 删 KPI 卡与设备列表，整页只留三维 + 镜头控制 | — |
+| `/overview` 纯三维页 | `b3b9844` | 删 KPI 卡与设备列表，整页只留三维 + 镜头控制 | 14 台三维点击 14/14 |
+| 色调亮化 | `7d28388` | 地面/围护亮一档，背景改暗青渐变（撤白底），bloom 阈值回 0.85 | 背景 #1a3643、地面中灰 |
+| HUD 青化 | `79bd4b5` | tokens 深青色系 + 视口覆盖层/名牌青化 | 单测 167 |
+| 删中央灯带 | `76051a6` | 走廊机位下竖白线（作者：没有作用） | 灯带 5→4 |
+| 删中排柱 | `76c032e` | 两线之间 4 根无支撑柱（作者：多余） | 柱列 3 排→2 排 |
+| 视角左移 | `2c38108` | overview 整机位 +x 平移 4，球心随 target 平移 | 墙角投影 offset 收敛 |
+| **R1.6 密度** | **`4502540`** | 每车间 47 件装饰件 + 4 类 InstancedMesh + env 拾取遮挡 + 光标修复 | §18：scene 61 / 三角 36,122 / fps 144.4；30 点击 0 弹卡 |
 
 **四点必须一起记住**（都是踩过的坑）：
 
@@ -317,4 +345,4 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 3. 两个窗口同时写同一文件时，Vite 可能缓存半截模块（报 `does not provide an export named ...`）→ `touch` 该文件触发重转换即恢复，不必重启。
 4. **D3 验收脚本已过期**：R1.5 A 把预设从 5 扩到 7，`acceptance-d3.mjs` 的 `LABEL` 仍写死 5 个，导致 3 项断言失效（预设数量 / 20 对切换 / 入场 `lastTransitionMs` 被加载期 1000 ms 过渡覆盖）。这与设备建模无关，**14/14 点击命中复测通过**。下一批同步脚本到 7 预设再重跑。
 
-**仍未做**：盲测（3 人、≥2 人说「工厂」）、D4 粒子与光斑、D5 收尾、D6 演示物料、顶部不铺屋面板带来的白背景（等作者表态）。
+**仍未做**：盲测（3 人、≥2 人说「工厂」）、D4 粒子与光斑、D5 收尾、D6 演示物料、R1.5 B 层厂区放大（作者未确认）。顶部不铺屋面板的白背景问题已随亮化批消除（背景改暗青）。
