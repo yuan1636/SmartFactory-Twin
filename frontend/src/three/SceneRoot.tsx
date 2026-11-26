@@ -217,7 +217,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     // ACESFilmic 会压暗中间调（这正是它的目的：保住高光），所以配合色调映射必须把光补回来，
     // 否则设备细节全埋进暗部——D1 第一版就是这个症状：墙有了，但"看不清"（比 D0 更糟）。
     //
-    // 批 1（D-75）把这些光整体压低、把主光抬高：原来 6 盏光互相抵消，明暗被冲平，
+    // 批 1（D-76）把这些光整体压低、把主光抬高：原来 6 盏光互相抵消，明暗被冲平，
     // 物体"没有受光方向"，这是塑料感的第一个来源。现在把底光交给 IBL（见下面
     // applySceneEnvironment），直射光只留一盏主光 + 一盏弱补光，对比度才出得来。
     const hemi = new THREE.HemisphereLight(0xdfe9f5, 0x2a3a4d, 0.95);
