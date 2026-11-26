@@ -15,6 +15,7 @@ import { applyDeviceState, applyDisconnected, buildFactory, setDeviceSelected, t
 import { cutawaySides } from './envInterior';
 import { applySceneEnvironment } from './environment';
 import { createContactShadows } from './contactShadow';
+import { upgradeDevicesWithGlb } from './glbDevices';
 import { CAMERA_PRESETS, DEFAULT_FOV, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMITS, PRESET_ORDER, focusPose, type CameraPose, type PresetKey } from './cameraPresets';
 import { createLabelRenderer, setLabelShown } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
@@ -807,8 +808,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       getStats,
     };
 
-    if (import.meta.env.DEV) {
-      window.__sceneDebug = {
+    const debugApi = {
         renderInfo: getStats,
         camera: () => ({
           position: camera.position.toArray() as [number, number, number],
@@ -898,8 +898,23 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
           }
           return map;
         },
-      };
-    }
+    };
+
+    // 批 3（D-78）：先把程序化外壳换成 GLB，再挂调试接口。
+    // 验收脚本一律以 `window.__sceneDebug` 出现作为"场景就绪"——
+    // 若先挂接口，脚本可能在替换完成之前就量 draw call 与三角数，数字会飘。
+    // 替换失败也必须挂：宁可少一层细节，也不能让验收与页面卡在"未就绪"。
+    void upgradeDevicesWithGlb(build)
+      .then((r) => {
+        console.info(
+          `[glb] 已替换 ${r.swapped} 台（跳过 ${r.skipped}），合计 ${r.triangles} 三角`,
+          r.failed.length ? `失败：${r.failed.join('；')}` : '',
+        );
+      })
+      .catch((error) => console.warn('[glb] 替换失败，保留程序化几何', error))
+      .finally(() => {
+        if (import.meta.env.DEV) window.__sceneDebug = debugApi;
+      });
 
     return () => {
       cancelAnimationFrame(raf);

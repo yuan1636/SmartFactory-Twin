@@ -1784,3 +1784,63 @@ env 23/23 · d1 9/9 · d3 11/11 · device 54/54
 - **墙面仍是纯色**：壁柱解决"尺度"，没解决"材质"。墙面是顶点色合并几何、没有 UV，
   贴图方案要单独设计（或改成按墙板分格的几何缝隙）。
 - **设备本体仍是盒子**：这一批完全没碰设备。观感上限卡在批 3（GLB）。
+
+-----
+
+# 第 22 节：批 3「GLB 设备模型」（D-78，2026-11-26）
+
+## 22.1 管线
+
+```text
+tools/blender/gen_devices.py        （bpy 参数化建模，尺寸取自 DEVICE_SIZES）
+        ↓  blender -b --python ... -- frontend/public/models
+frontend/public/models/{cnc,robot,inspection}.glb   （155 / 140 / 100 KB）
+        ↓  GLTFLoader 加载 → 按材质分桶 → 顶点色烘焙 → 合并
+frontend/src/three/glbDevices.ts     （每台 2~3 个 mesh，写回 build.arms 与 deviceDetails）
+```
+
+选用脚本建模而不是下载 CC0 资源的两个理由：尺寸是参数（改 `DEVICE_SIZES` 重跑即可）、
+"模型是自己生成的"在答辩时经得起追问；代价是要自己写形体，细节上限低于手工雕刻。
+
+## 22.2 三个必须踩过的坑
+
+1. **draw call 会爆**。Blender 的导出粒度是"一零件一 mesh"，一台 CNC 25 个 mesh，
+   直接进场景 14 台就是 +300 次绘制。解决：运行时按源材质的 `metalness` 与 `opacity`
+   分 paint / metal / glass 三桶，把材质色写进顶点色后 `mergeGeometries`。
+   结果每台 2~3 个 mesh，scene draw call 59 → 79（仍在 ≤100 内）。
+2. **颜色空间**。Blender 的 Base Color 是线性值，按 sRGB 习惯给 0.82 会变成近白：
+   实测第一版机床是一块白板、护罩分缝全糊。改成线性工业灰后正常。
+3. **StrictMode 双跑**。dev 下 effect 跑两遍，第二遍只清了程序化外壳、没清上一次装上的
+   GLB 网格，几何叠加，整链从 130 涨到 190。按 `deviceId:` 前缀清理后恢复。
+
+## 22.3 机械臂动画怎么保住的
+
+motion.ts 只做一件事：每帧写 `arms.get(id).rotation.y`。所以只要"枢轴"这个对象还在，
+里面装的是程序化几何还是 GLB 都无所谓。Blender 里把大臂及以上 9 个零件挂在
+`arm_pivot` 空物体（Z = 1.95，与 `ARM_PIVOT_Y` 同值），加载时按"相对枢轴的矩阵"烘焙，
+再挂回一个同名 Group 写进 `build.arms`。动画代码零改动，`acceptance-motion` 未受影响。
+
+## 22.4 实测
+
+```text
+设备三角     CNC 3,180 / ROBOT 2,508 / INSPECTION 1,408（上限 8,000）
+每台 mesh    CNC 3 / ROBOT 2（+枢轴组内 2）
+scene calls  59 → 79（上限 100）
+shadow       54 → 94（GLB 每台 2~3 个投影体）
+整链         130 → 190
+全场景三角   33,766 → 46,606
+fps          144（未降）
+单测 187 · env 23/23 · d1 9/9 · d3 11/11 · device 54/54
+```
+
+截图：`output/model-upgrade/b3_overview.png`、`b3_focus.png`、`b3_line.png`。
+
+## 22.5 还没做的
+
+- **CONVEYOR / AUX 仍是程序化**：输送机有滚筒动画（`RollerRig` 每帧写实例矩阵），
+  换成 GLB 要一起改造动画接口；辅助设备形体简单，收益低。下一步再做。
+- **细节密度不够**：现在每台 3 千三角，倒角 2 段、无贴图。要做到参考图那种程度，
+  至少需要：法线贴图（划痕/漆面颗粒）、面板铭牌文字、门轴铰链、内部主轴可见。
+  这些都可以继续在脚本里加，但每加一项都要重跑导出与验收。
+- **整链 190 次绘制**偏多（阴影占 94）。若将来掉帧，第一步是把机械臂设为不投影
+  （`castShadow = false`），可省 8 次阴影绘制而不影响观感。
