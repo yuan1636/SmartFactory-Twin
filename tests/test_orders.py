@@ -37,8 +37,38 @@ def advancer_session():
     advancer = OrderAdvancer(session)
     # 只对 LINE-A1 生效：避免用例把其它三条线的真实在制单结算掉
     advancer.lines = [{"id": LINE_ID, "workshop_id": "WS-A"}]
-    yield advancer, session
-    session.close()
+
+    # 模拟器一直在推进订单，这条线很可能已经有在制单。ensure_orders 的设计是
+    # 「一条线至多一张在制单」，此时它不会再开新单，用例的断言会误红（2026-11-26 实测：
+    # LINE-A1 已有 ORD-20261126-0005，导致 created=0）。用例期间把已有的在制单临时
+    # 标成 PLANNED（不违反 line 外键与 status CHECK），结束后恢复 IN_PROGRESS——
+    # 只动 status，不动 line_id/数量/时间。
+    others = [
+        row.order_id
+        for row in session.execute(
+            text("SELECT order_id FROM production_orders WHERE line_id = :line_id AND status = 'IN_PROGRESS'"),
+            {"line_id": LINE_ID},
+        )
+    ]
+    for order_id in others:
+        session.execute(
+            text("UPDATE production_orders SET status = 'PLANNED' WHERE order_id = :order_id"),
+            {"order_id": order_id},
+        )
+    if others:
+        session.commit()
+
+    try:
+        yield advancer, session
+    finally:
+        for order_id in others:
+            session.execute(
+                text("UPDATE production_orders SET status = 'IN_PROGRESS' WHERE order_id = :order_id"),
+                {"order_id": order_id},
+            )
+        if others:
+            session.commit()
+        session.close()
 
 
 def _inject_overdue_order(session: Session, planned_end: datetime) -> None:

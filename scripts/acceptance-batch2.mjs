@@ -209,33 +209,33 @@ async function checkProduction(s) {
 
 async function checkAi(s) {
   await s.goto('/ai');
-  const ready = await s.waitFor('document.querySelector(".notice-bar")');
-  check('AI 页声明条存在', ready);
+  const ready = await s.waitFor('document.querySelector("[data-report-advice]")');
+  check('AI 页（工厂日报）结论条存在', ready);
 
   const body = await s.evaluate('document.body.innerText');
-  const notice = await s.evaluate('document.querySelector(".notice-bar")?.innerText ?? ""');
-  // 第 4 阶段 4.2 起这一页有模型了，第 3 阶段的「不含模型推理」断言已作废，
-  // 换成等价的合规要求：必须写明指标来源（离线测试集）与注入密度的演示性质。
+  // 改版（D-74）后声明条并入结论条下方：演示性质与「系数是假设值」必须仍然可见
   check(
-    '10.2-12 声明条写明指标来源与演示性质',
-    /离线测试集结果/.test(notice) && /注入密度/.test(notice) && /演示设定/.test(notice),
-    notice.slice(0, 48).replace(/\s+/g, ' '),
+    '10.2-12 页面写明数据为模拟器注入、系数为假设值',
+    /模拟器注入/.test(body) && /假设值/.test(body),
+    body.slice(0, 48).replace(/\s+/g, ' '),
   );
 
   const banned = /准确率|故障概率|预计故障|模型置信度|预测准确/.exec(body);
   check('10.2-12 页面无编造的模型指标', banned === null, banned ? `出现「${banned[0]}」` : '未发现');
 
-  // 预留虚线框在第 4 阶段已被真实模型区取代，断言随之换成"模型区存在"。
-  check(
-    '10.2-12 模型输出区存在（原预留框已替换）',
-    await s.evaluate('Boolean(document.querySelector("[data-ml-state]"))'),
-  );
+  // 模型区默认收进 <details>，展开后才是原来的指标卡与图表（D-74）
+  await s.evaluate('document.querySelector("[data-report-fold]").open = true');
+  const shown = await s.waitFor('Boolean(document.querySelector("[data-ml-state]"))', 20000);
+  check('10.2-12 模型详情可展开（原模型区仍在，只是默认收起）', shown);
 
+  // 展开后模型与真值数据才开始拉取（默认不轮询），要等图表真正画出来再数
+  await s.waitFor('document.querySelectorAll("canvas").length >= 2', 25000);
   const canvases = await s.evaluate('document.querySelectorAll("canvas").length');
-  check('AI 页两张图已绘制', canvases >= 2, `${canvases} 个 canvas`);
+  check('AI 页图表已绘制（折叠区展开后）', canvases >= 2, `${canvases} 个 canvas`);
 
+  await s.waitFor('document.querySelectorAll(".table tbody tr").length > 5', 25000);
   const rows = await s.evaluate('document.querySelectorAll(".table tbody tr").length');
-  check('真值表有数据', rows > 0, `${rows} 行`);
+  check('真值表有数据（折叠区内）', rows > 5, `${rows} 行`);
 }
 
 
