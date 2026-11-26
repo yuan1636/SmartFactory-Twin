@@ -230,9 +230,13 @@ describe('R1.5 A 层：柱列与地面细节', () => {
   const colBody = parts.filter((p) => p.color === INTERIOR_COLORS.column);
   const colFoot = parts.filter((p) => p.color === INTERIOR_COLORS.columnFoot && isFoot(p));
 
-  it('柱列：每车间 3 排 × 2 列 = 6 根（柱身 + 1m 护脚各一件，共 24 件）', () => {
-    expect(colBody).toHaveLength(WORKSHOPS.length * 6);
-    expect(colFoot).toHaveLength(WORKSHOPS.length * 6);
+  it('柱列：每车间 2 排（z=±10）× 2 列 = 4 根；中排 z=0 已按作者 2026-11-26 要求删除', () => {
+    expect(colBody).toHaveLength(WORKSHOPS.length * 4);
+    expect(colFoot).toHaveLength(WORKSHOPS.length * 4);
+    // 中排不许回来：z=0 附近（±1m）不许有任何柱
+    for (const p of [...colBody, ...colFoot]) {
+      expect(Math.abs(p.z - WORKSHOPS.find((w) => Math.abs(p.z - w.z) < 12)!.z)).toBeGreaterThan(9);
+    }
     for (const p of [...colBody, ...colFoot]) {
       expect(p.sx).toBeCloseTo(0.5, 6);
       expect(p.sz).toBeCloseTo(0.5, 6);

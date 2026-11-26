@@ -143,7 +143,10 @@ function columns(ws: WorkshopSpec): EnvPart[] {
   const out: EnvPart[] = [];
   const S = 0.5;
   const foot = 1;
-  for (const dz of [-10, 0, 10]) {
+  // 只保留 z=±10 两排（作者 2026-11-26：「多余的两根柱子删去」）——
+  // 中排 dz=0 立在两条产线之间，屋架删除后没有任何支撑对象，纯碍眼。
+  // 若日后恢复屋架，柱排需与桁架跨度对齐后再加回。
+  for (const dz of [-10, 10]) {
     for (const dx of [-10, 10]) {
       const x = ws.x + dx;
       const z = ws.z + dz;
