@@ -15,7 +15,9 @@ UTC = timezone.utc
 
 QUALIFIED_RATIO = 0.97          # 合格率固定 97%
 PIECES_PER_HOUR = 30            # 额定产能 30 件/小时 → 每 2 分钟 +1 件
-ADVANCE_INTERVAL_SECONDS = 3600 // PIECES_PER_HOUR * 60  # = 120 秒
+# 每件 120 秒。注意不要写成 3600 // PIECES_PER_HOUR * 60：同级运算从左到右，
+# 那样求值是 (3600//30)*60 = 7200 秒（2 小时/件），一单 120 件要 10 天。
+ADVANCE_INTERVAL_SECONDS = 3600 // PIECES_PER_HOUR  # = 120 秒
 PLANNED_QUANTITY = 120
 ORDER_SPAN_HOURS = 4
 
@@ -33,9 +35,16 @@ class OrderAdvancer:
     # ---------- 对外接口 ----------
 
     def ensure_orders(self, now: datetime) -> int:
-        """每条产线保证有一张进行中的订单，返回新建张数。"""
+        """每条产线保证有一张进行中的订单，返回新建张数。
+
+        逾期自愈：模拟器停摆再启动时，可能留下 planned_end 已过的在制单——
+        若不结算，该线永远"有在制单"，ensure_orders 不会再开新单，
+        24 小时统计窗口内也没有完工单，页面会一直空。
+        所以先按计划量结算（合格率同 advance 的 97% 口径），再开新单。
+        """
         created = 0
         for line in self.lines:
+            self._settle_overdue(line["id"], now)
             existing = self.db.execute(
                 text(
                     """
@@ -52,6 +61,22 @@ class OrderAdvancer:
         if created:
             self.db.commit()
         return created
+
+    def _settle_overdue(self, line_id: str, now: datetime) -> int:
+        """把该线 planned_end 已过的在制单按计划量结算成 COMPLETED，返回结算张数。"""
+        result = self.db.execute(
+            text(
+                """
+                UPDATE production_orders
+                SET actual_quantity = planned_quantity,
+                    qualified_quantity = floor(planned_quantity * :ratio),
+                    status = 'COMPLETED'
+                WHERE line_id = :line_id AND status = 'IN_PROGRESS' AND planned_end < :now
+                """
+            ),
+            {"ratio": QUALIFIED_RATIO, "line_id": line_id, "now": now},
+        )
+        return result.rowcount
 
     def advance(self, now: datetime) -> int:
         """到点（120 秒）推进一次，返回本次新增的成品件数。"""
