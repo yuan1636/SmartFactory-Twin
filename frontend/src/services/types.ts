@@ -330,3 +330,34 @@ export interface ScorePayload {
   };
   intervals: ScoreInterval[];
 }
+
+/* ------------------------------------------------------------------ */
+/* 工厂日报（/ai 页，deviation D-74）：系数一律来自 /report/config      */
+/* ------------------------------------------------------------------ */
+
+/** 异常类型 → 降速比例与预计处置时长。missing 时页面必须显示「数据不足」。 */
+export interface AnomalyHandling {
+  label: string;
+  slowdown: number;
+  handling_minutes: number;
+}
+
+export interface ReportConfig {
+  version: string;
+  note: string;
+  currency: string;
+  /** 0 或负数视为「未配置单价」，页面显示「未配置单价」而不是 0 元 */
+  unit_price_cny: number;
+  defect_rate: number;
+  /** 风险分（峰值 × 分钟）≥ 此值算高风险设备 */
+  risk_score_high: number;
+  action_thresholds: { stop: number; today: number };
+  /** 建议处理时限（小时），按动作档位映射，结论条第三个数字 */
+  action_deadline_hours: { stop: number; today: number; observe: number };
+  report_window_minutes: number;
+  delivery_horizon_hours: number;
+  lines: Record<string, { cycle_per_minute: number }>;
+  anomaly_handling: Record<string, AnomalyHandling>;
+  /** 后端标注该文件是假设值，页面底部原文照录 */
+  source: { file: string; kind: string };
+}

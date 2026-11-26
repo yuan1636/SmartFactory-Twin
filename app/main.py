@@ -14,7 +14,7 @@ from fastapi import APIRouter, FastAPI
 from app.config import settings
 from app.db import db_available
 from app.errors import UTF8JSONResponse, register_exception_handlers
-from app.routers import alarms, anomalies, devices, health, hierarchy, maintenance, ml, orders, telemetry, ws
+from app.routers import alarms, anomalies, devices, health, hierarchy, maintenance, ml, orders, report, telemetry, ws
 from app.services import monitor
 
 logging.basicConfig(
@@ -59,6 +59,7 @@ api.include_router(orders.router)
 api.include_router(maintenance.router)
 api.include_router(anomalies.router)
 api.include_router(ml.router)
+api.include_router(report.router)
 api.include_router(ws.router)
 
 app.include_router(api)

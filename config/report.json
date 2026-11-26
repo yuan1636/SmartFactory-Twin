@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "note": "工厂日报的假设参数（演示用）。产能节拍优先用该线在制订单的「计划数量 / (planned_end - planned_start)」反推，反推不到才用 cycle_per_minute；处置时长、降速比例、不良率、单价均为假设值，不是实测财务或成本数据，页面上标为「假设值」。",
+  "currency": "CNY",
+  "unit_price_cny": 850,
+  "defect_rate": 0.03,
+  "risk_score_high": 3,
+  "action_thresholds": {
+    "stop": 15,
+    "today": 5
+  },
+  "action_deadline_hours": {
+    "stop": 2,
+    "today": 8,
+    "observe": 24
+  },
+  "report_window_minutes": 120,
+  "delivery_horizon_hours": 8,
+  "lines": {
+    "LINE-A1": { "cycle_per_minute": 0.5 },
+    "LINE-A2": { "cycle_per_minute": 0.5 },
+    "LINE-B1": { "cycle_per_minute": 0.5 },
+    "LINE-B2": { "cycle_per_minute": 0.5 }
+  },
+  "anomaly_handling": {
+    "TEMP_DRIFT": { "label": "温度漂移", "slowdown": 0.25, "handling_minutes": 45 },
+    "VIB_SPIKE": { "label": "振动尖峰", "slowdown": 0.5, "handling_minutes": 60 },
+    "CURRENT_ABNORMAL": { "label": "电流异常", "slowdown": 0.35, "handling_minutes": 30 }
+  }
+}
