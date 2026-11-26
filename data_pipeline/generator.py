@@ -41,6 +41,17 @@ def status_at(epoch: float, cfg: DevicesConfig) -> str:
     return "STOPPED"
 
 
+def apply_stopped_physics(dev: DeviceConfig, values: dict) -> None:
+    """停机时的物理表现：不转、几乎不吃电、几乎不振动。
+
+    状态机判到 STOPPED 时用，模拟器读到 devices.status 被人工停用（维护/停机）时也用，
+    两处共用同一套口径，避免"停机了曲线还在跑"。
+    """
+    values["speed"] = 0.0
+    values["current"] = float(dev.normal_range["current"][0]) * 0.10
+    values["vibration"] = float(dev.normal_range["vibration"][0]) * 0.30
+
+
 def generate_metrics(
     dev: DeviceConfig,
     epoch: float,
@@ -60,12 +71,7 @@ def generate_metrics(
 
     status = status_at(epoch, cfg)
     if status == "STOPPED":
-        # 停机时的物理表现：不转、几乎不吃电、几乎不振动
-        low_current = float(dev.normal_range["current"][0])
-        low_vibration = float(dev.normal_range["vibration"][0])
-        values["speed"] = 0.0
-        values["current"] = low_current * 0.10
-        values["vibration"] = low_vibration * 0.30
+        apply_stopped_physics(dev, values)
 
     # 转速取整（数据库是 INTEGER），其余指标保留原始精度，展示时再 round
     result: dict[str, float | int] = {

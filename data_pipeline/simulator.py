@@ -23,10 +23,11 @@ from sqlalchemy import text
 from app.config import DeviceConfig, devices_config, settings
 from app.db import SessionLocal, engine
 from data_pipeline.backfill import run_backfill
-from data_pipeline.generator import generate_metrics
+from data_pipeline.generator import apply_stopped_physics, generate_metrics
 from data_pipeline.http_client import ApiError, TelemetryClient
 from data_pipeline.injector import RealtimeInjector, apply_active
-from data_pipeline.orders import OrderAdvancer
+from data_pipeline.line_pace import UNAVAILABLE_STATUSES, load_line_states
+from data_pipeline.orders import PIECES_PER_HOUR, OrderAdvancer
 
 UTC = timezone.utc
 
@@ -189,12 +190,25 @@ def main(argv: list[str] | None = None) -> int:
             injector.finish_due(ts_epoch)
             stats.injected_total += len(started_windows)
 
+            # 本拍各线节拍：可用率 × 异常系数，由设备状态与活跃注入算出（D-73）。
+            # 与 /stats 的 utilization 同源：都等价于"该线 RUNNING 设备占比"。
+            line_states, db_status = load_line_states(db, ts_epoch, devices_config, PIECES_PER_HOUR)
+            produced = {
+                line_id: state.pace_per_hour / 3600.0 * args.rate
+                for line_id, state in line_states.items()
+            }
+            qualified_rates = {line_id: state.qualified_rate for line_id, state in line_states.items()}
+
             rows = []
             for dev in devices:
                 values = generate_metrics(dev, ts_epoch, rng, devices_config)
                 apply_active(
                     list(injector.active.values()), dev, values, ts_epoch, devices_config, args.rate, rng
                 )
+                # 人工停用（维护/停机）优先：状态机说在转也没用，遥测与节拍一起按停机处理
+                if db_status.get(dev.device_id) in UNAVAILABLE_STATUSES:
+                    apply_stopped_physics(dev, values)
+                    values["running_status"] = "STOPPED"
                 rows.append(
                     {
                         "device_id": dev.device_id,
@@ -219,12 +233,14 @@ def main(argv: list[str] | None = None) -> int:
                 error_text = f" error={str(exc)[:120]}"
             latency_ms = int((time.perf_counter() - request_started) * 1000)
 
-            advanced = advancer.advance(ts_dt)
+            advanced = advancer.advance(ts_dt, produced, qualified_rates)
             stats.ticks = tick
+            pace_total = sum(state.pace_per_hour for state in line_states.values())
             print(
                 f"[{datetime.fromtimestamp(ts_epoch).strftime('%Y-%m-%d %H:%M:%S')}] "
                 f"tick={tick} devices={len(devices)} rows={len(rows)} "
-                f"injected={len(started_windows)} orders=+{advanced} latency={latency_ms}ms{error_text}",
+                f"injected={len(started_windows)} pace={pace_total:.0f}/h orders=+{advanced} "
+                f"latency={latency_ms}ms{error_text}",
                 flush=True,
             )
 

@@ -1,4 +1,8 @@
-"""订单推进器（规格 6.6）。
+"""订单推进器（规格 6.6 / 偏差 D-73）。
+
+推进方式：按"本 tick 各线应产件数"累加，件数由 data_pipeline.line_pace 按设备状态算出，
+本模块只负责记账（含小数余量）与完工结算。2026-11-26 之前这里是纯计时器
+（每 120 秒每线 +1 件），与设备状态脱钩，导致"利用率 86.7% 但产量满速"的矛盾。
 
 不在这个推进器里算的：订单延期判定（DELAYED），那需要排产算法，属 L-06，本阶段固定不做。
 """
@@ -13,13 +17,43 @@ from sqlalchemy.orm import Session
 
 UTC = timezone.utc
 
-QUALIFIED_RATIO = 0.97          # 合格率固定 97%
-PIECES_PER_HOUR = 30            # 额定产能 30 件/小时 → 每 2 分钟 +1 件
-# 每件 120 秒。注意不要写成 3600 // PIECES_PER_HOUR * 60：同级运算从左到右，
-# 那样求值是 (3600//30)*60 = 7200 秒（2 小时/件），一单 120 件要 10 天。
-ADVANCE_INTERVAL_SECONDS = 3600 // PIECES_PER_HOUR  # = 120 秒
+QUALIFIED_RATIO = 0.97          # 默认合格率 97%；异常期间的更高不良由 line_pace 给出
+PIECES_PER_HOUR = 30            # 额定产能 30 件/小时
+# 满速每件 120 秒。注意不要写成 3600 // PIECES_PER_HOUR * 60：同级运算从左到右，
+# 那样求值是 (3600//30)*60 = 7200 秒。此常量只用于文档/测试，推进不再用它当计时器。
+RATED_SECONDS_PER_PIECE = 3600 // PIECES_PER_HOUR  # = 120 秒
 PLANNED_QUANTITY = 120
 ORDER_SPAN_HOURS = 4
+
+
+class PieceAccumulator:
+    """把"每 tick 应产件数"累成整件，并保留小数余量。
+
+    默认采样 2 秒一拍、满速 30 件/小时时每拍只有 1/60 件，
+    不保留余量的话永远不会进位（这是改造前不敢按件数推进的原因之一，D-73）。
+    """
+
+    def __init__(self) -> None:
+        self._pieces = 0.0
+        self._qualified = 0.0
+
+    def add(self, pieces: float, qualified_rate: float) -> tuple[int, int]:
+        """累加本拍应产件数，返回本次可结算的（整件数, 其中的合格件数）。"""
+        if pieces <= 0:
+            return 0, 0
+        self._pieces += pieces
+        whole = math.floor(self._pieces)
+        if whole <= 0:
+            return 0, 0
+        self._pieces -= whole
+        self._qualified += whole * max(0.0, min(1.0, qualified_rate))
+        qualified = min(whole, math.floor(self._qualified))
+        self._qualified -= qualified
+        return whole, qualified
+
+    def push_back(self, pieces: int) -> None:
+        """订单装不下（完工）时把多出来的整件退回余量，下一拍继续用。"""
+        self._pieces += pieces
 
 
 class OrderAdvancer:
@@ -29,8 +63,8 @@ class OrderAdvancer:
             {"id": r.id, "workshop_id": r.workshop_id}
             for r in db.execute(text("SELECT id, workshop_id FROM production_lines ORDER BY id")).all()
         ]
-        self.last_advance_epoch: float | None = None
         self.pieces_advanced = 0
+        self._accumulators: dict[str, PieceAccumulator] = {}
 
     # ---------- 对外接口 ----------
 
@@ -78,19 +112,33 @@ class OrderAdvancer:
         )
         return result.rowcount
 
-    def advance(self, now: datetime) -> int:
-        """到点（120 秒）推进一次，返回本次新增的成品件数。"""
-        epoch = now.timestamp()
-        if self.last_advance_epoch is not None and epoch - self.last_advance_epoch < ADVANCE_INTERVAL_SECONDS:
-            return 0
-        self.last_advance_epoch = epoch
+    def advance(
+        self,
+        now: datetime,
+        produced_by_line: dict[str, float],
+        qualified_rate_by_line: dict[str, float] | None = None,
+    ) -> int:
+        """按本拍各线应产件数推进订单，返回本次实际结算的成品件数。
 
+        produced_by_line 与 qualified_rate_by_line 都由 line_pace.load_line_states() 给出，
+        本方法只做记账：累加、进位（保留小数余量）、完工结算、开新单。
+        """
+        rates = qualified_rate_by_line or {}
         advanced = 0
         for line in self.lines:
+            pieces = float(produced_by_line.get(line["id"], 0.0))
+            if pieces <= 0:
+                continue
+
+            acc = self._accumulators.setdefault(line["id"], PieceAccumulator())
+            whole, qualified = acc.add(pieces, rates.get(line["id"], QUALIFIED_RATIO))
+            if whole <= 0:
+                continue  # 不足 1 件，余量留着，别丢
+
             order = self.db.execute(
                 text(
                     """
-                    SELECT order_id, planned_quantity, actual_quantity
+                    SELECT order_id, planned_quantity, actual_quantity, qualified_quantity
                     FROM production_orders
                     WHERE line_id = :line_id AND status = 'IN_PROGRESS'
                     ORDER BY planned_start DESC LIMIT 1
@@ -99,12 +147,20 @@ class OrderAdvancer:
                 {"line_id": line["id"]},
             ).first()
             if order is None:
+                acc.push_back(whole)  # 没有在制单：先把件退回去，开好新单下一拍再记
                 self._create_order(line, now, status="IN_PROGRESS")
                 continue
 
-            actual = int(order.actual_quantity) + 1
-            qualified = math.floor(actual * QUALIFIED_RATIO)  # 用累加余数法，长期稳定在 97%
-            if actual >= int(order.planned_quantity):
+            planned = int(order.planned_quantity)
+            room = planned - int(order.actual_quantity)
+            applied = min(whole, room)
+            if applied < whole:
+                acc.push_back(whole - applied)  # 本单装不下的余量留到下一单
+            new_actual = int(order.actual_quantity) + applied
+            # 合格件数不得超过实际件数（异常期间合格率更低，取整可能越界）
+            new_qualified = min(int(order.qualified_quantity) + min(qualified, applied), new_actual)
+
+            if new_actual >= planned:
                 self.db.execute(
                     text(
                         """
@@ -113,7 +169,7 @@ class OrderAdvancer:
                         WHERE order_id = :order_id
                         """
                     ),
-                    {"actual": int(order.planned_quantity), "qualified": math.floor(int(order.planned_quantity) * QUALIFIED_RATIO), "order_id": order.order_id},
+                    {"actual": planned, "qualified": new_qualified, "order_id": order.order_id},
                 )
                 self._create_order(line, now, status="IN_PROGRESS")
             else:
@@ -125,9 +181,9 @@ class OrderAdvancer:
                         WHERE order_id = :order_id
                         """
                     ),
-                    {"actual": actual, "qualified": qualified, "order_id": order.order_id},
+                    {"actual": new_actual, "qualified": new_qualified, "order_id": order.order_id},
                 )
-            advanced += 1
+            advanced += applied
         if advanced:
             self.pieces_advanced += advanced
             self.db.commit()
