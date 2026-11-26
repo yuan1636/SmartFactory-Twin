@@ -102,25 +102,6 @@ textarea {
   border-left-color: var(--accent);
 }
 
-.side-nav__item.is-disabled {
-  color: #465569;
-  cursor: not-allowed;
-}
-
-.side-nav__item.is-disabled:hover {
-  background: transparent;
-  color: #465569;
-}
-
-.side-nav__badge {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: var(--r-tag);
-  padding: 0 5px;
-}
-
 .main {
   flex: 1;
   min-width: 0;
