@@ -17,6 +17,8 @@ R1 车间室内壳 → R1.5 A 观看方式（FOV 60 + WALK/AISLE 人视预设）
 设备验收 **54/54**、单测 **179 passed**、`tsc` 0 error；
 d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / d3 11/11 / device 54/54 全绿；
 batch2 20/24（4 项失败 = 生产页统计空窗数据态，长期存在，与本批无关）。
+**2026-11-26 插入一次后端修复（`ffa8e67`）**：订单推进间隔 7200 s → 120 s（生产分析页 24 小时窗口因此恒空），
+ensure_orders 加逾期在制单自愈；pytest 25 → 28 passed（新增 `tests/test_orders.py`），见 §4 #17。
 **下一步仍是 D4 剩余（粒子与旋转光斑），之后 D5 界面层收尾、D6 性能与演示物料。**
 标签链：`v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准，**B 层厂区放大未实施**）→ `v0.4-density`（R1.6）。
 
@@ -262,7 +264,8 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | 13 | **环境层参与拾取遮挡** | `SceneRoot.pick` 把 envRoot 与设备组一起进 raycaster，最近命中决定结果——装饰件挡住的射线不透到设备；改拾取逻辑别只查设备组 |
 | 14 | **overview/入场球心 = target** | 视角校准后 target 是 (4,0,0) 不是原点；改相机预设必须同步 ENTRANCE_START/PATH（`cameraPresets.test.ts` 有守卫） |
 | 15 | **本机 DNS 把 github.com 劫持到 127.0.0.1** | 加速器类工具残留；推送走 `~/.ssh/config` 的 `HostName 140.82.112.4 + HostKeyAlias github.com` 直连（DNS 恢复后可删） |
-| 16 | **沙箱命令会双执行** | git commit / tag 偶发跑两遍，第二遍报 already exists / nothing to commit（exit 1）——先 `git log` 核对再决定，别盲目重试 |
+| 16 | **沙箱命令会双执行** | git commit / tag 偶发跑两遍，第二遍报 already exists / nothing to commit（exit 1）——先 `git log` 核对再决定，别盲目重试。2026-11-26 还发现**起服务也会双执行**：Start-Process 起的 uvicorn / 模拟器各翻一倍且会被沙箱延迟回收，本窗口起服务一律走受管后台任务 |
+| 17 | **订单推进间隔曾是 7200 秒** | `3600 // 30 * 60` 从左到右求值 = 7200 秒/件（注释却写 120 秒），24 小时窗口恒 0 完工单、生产分析页空屏；4 张在制单卡 29/120 超 42 小时。已修（`ffa8e67`）并加**逾期自愈**：ensure_orders 先把 planned_end 已过的在制单按计划量结算再开新单。测试 25 → 28（新增 `tests/test_orders.py` 3 条） |
 
 ---
 
