@@ -1506,7 +1506,7 @@ draw call：scene 84 / shadow 54 / post 17 = 155（与改前一致）
 
 -----
 
-# 第 18 节：R1.6 补场景密度（作者 2026-11-26 追加，v0.4-density）
+# 第 18 节：R1.6 补场景密度（作者 2026-11-26 追加，v0.4-density；**已于同日回退，见 §18.6**）
 
 ## 18.1 改了什么
 
@@ -1563,3 +1563,33 @@ batch2 20/24 —— 4 项失败为生产页"统计窗口无已完工订单"的�
 
 - 环境层参与拾取后，pointermove 每次要做一次全场合并网格的 raycast（~36k 三角、无 BVH），节流 80ms 下实测 fps 144.4 无感；若未来卡顿，引入 three-mesh-bvh 即可。
 - 隔着玻璃办公室看设备时，玻璃面会先命中（设备仍可点击，因为玻璃与设备不相交的视角下设备更近）；实拍未发现误挡。
+
+## 18.6 回退（作者 2026-11-26 11:26 要求）
+
+作者原话：「把之前对话阶段我让你补充场景密度的很多显示装置去掉，其它的不要动」。§18.1~18.5 的**代码已全部撤出**，本节保留作为历史记录（原判断并非实现错误，而是作者看过实际效果后不需要这些装饰件）。
+
+| 撤掉了什么 | 怎么撤的 |
+|---|---|
+| `propLayout.buildDensityProps()` 及 `densityColor` / `DENSITY_BASE_COLORS` / `DENSITY_UNIT_SHAPE` / `WALL_FACE_*` / `TRAY_Z` / `COLUMN_OFFSET`（47 件/车间） | `propLayout.ts` 整文件回到 `4502540^` |
+| `EnvPart.inst` 标记、`buildDensityProps()` 调用、`'density-props'` 类别 | `envLayout.ts` 回到 `4502540^` |
+| 4 个 InstancedMesh 聚合块、`instancedMeshList` 释放、`drawables` 的 `'instanced'` 分支 | `envBuilder.ts` 回到 `4502540^` |
+| `ENV_GROUP_BUDGET` 10 → 6 | `scripts/acceptance-env.mjs` 回到 `4502540^` |
+| 12 条密度铁律单测 | 删除 `propLayout.density.test.ts` |
+
+**保留未动**（不属于"显示装置"，是拾取正确性修复，删掉反而会退化）：
+
+- `SceneRoot.pick()` 把 `envRoot` 与设备组一起进 raycaster —— 墙/柱在设备前面时不再"透过去误弹卡"；
+- 光标无条件写 `pointer / grab`（原来只在 id 变化时写，首帧会卡在 `auto`）。
+
+回退后实测（2026-11-26 11:30）：
+
+```text
+profile：scene 57 / shadow 27 / post 17 = 101 calls（密度批为 105，−4 个实例化网格）
+三角面 33,210（密度批 36,122，−2,912）；fps 144.9
+单测 167 全过（179 − 12 条密度用例）；tsc -b 0 error
+env 23/23（合并组回到 6、环境层类别回到 9 类非密度口径）
+d1 9/9 · d3 11/11（7 预设、8 站巡游、14 台命中 100%）· device 54/54
+截图：output/env-after-revert/01_overview.png（靠墙层/物料层/天车均已消失，墙柱/产线/标线完整）
+```
+
+`v0.4-density` 标签仍指向 `4502540`，保留为"密度批曾有过的样子"，不删不改。

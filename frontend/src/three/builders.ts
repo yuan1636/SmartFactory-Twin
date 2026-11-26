@@ -79,9 +79,9 @@ export interface FactoryBuild {
   propKinds: string[];
   /** 环境层与产线补齐件的类别（本批新增，验收读它） */
   envKinds: string[];
-  /** 环境层各组实际绘制体数量：合计必须 ≤10（6 合并组 + R1.6 四个实例化网格） */
+  /** 环境层各组实际绘制体数量：合计必须 ≤6（一物一 mesh 会在这里露馅） */
   envDrawables: Array<{ group: string; meshes: number }>;
-  /** R1.6：环境层根节点（拾取时参与遮挡——装饰件挡住的射线不许透到设备） */
+  /** 环境层根节点（拾取时参与遮挡——墙/柱挡住设备时不许透过去误弹卡） */
   envRoot: THREE.Object3D;
   /** 室外剖切（D 批 R1）：相机在某车间某侧室外时把那面墙退化掉，规则见 envInterior.cutawaySides */
   setCutaway: (ids: ReadonlySet<string>) => void;

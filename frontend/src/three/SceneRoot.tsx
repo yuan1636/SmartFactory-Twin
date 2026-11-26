@@ -397,8 +397,8 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
     const pointer = new THREE.Vector2();
     let lastHoverAt = 0;
     const groups = Array.from(build.devices.values()).map((v: DeviceVisual) => v.group);
-    // R1.6：环境层一起进射线——装饰件在设备前面时，可见面是装饰件，
-    // 点击/hover 必须落在装饰件上（返回 null），而不是透到后面的设备。
+    // 环境层一起进射线：墙/柱比设备更靠近相机时，可见面是墙柱，
+    // 点击/hover 必须落在墙柱上（返回 null），而不是透到后面的设备。
     // 剖切掉的墙段是零面积退化三角形，raycast 天然跳过，不影响室外拾取。
     const pickTargets: THREE.Object3D[] = [...groups, build.envRoot];
 
@@ -428,9 +428,9 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         hoveredId = id;
         refreshHighlight();
       }
-      // R1.6 作者硬规则：装饰件上 hover 必须零反馈——非设备区一律默认箭头。
-      // 无条件写（原来只在 id 变化时写，首帧 hover 装饰件时 cursor 会一直是 auto）。
-      renderer.domElement.style.cursor = id ? 'pointer' : 'default';
+      // 非设备区恢复拖拽手势（grab），设备上为 pointer。
+      // 无条件写：只写在 id 变化处时，首帧悬停会一直是 auto。
+      renderer.domElement.style.cursor = id ? 'pointer' : 'grab';
     };
 
     let downAt: { x: number; y: number } | null = null;

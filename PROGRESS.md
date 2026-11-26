@@ -11,16 +11,17 @@
 第 4 阶段展示改造已完成 **D0 / D1 / D2 / D3 + 追加批**，以及作者临时插入的 **D 批**：
 R1 车间室内壳 → R1.5 A 观看方式（FOV 60 + WALK/AISLE 人视预设）→ R2/R3 设备建模 v2 →
 顶部清理 → 色调亮化（亮灰车间 + 暗青背景 + HUD 青化）→ `/overview` 纯三维展示页 →
-场景减法（删灯带/中排柱）→ 初始视角校准 → **R1.6 补场景密度（2026-11-26，tag `v0.4-density`）**。
+场景减法（删灯带/中排柱）→ 初始视角校准 → R1.6 补场景密度（tag `v0.4-density`）→
+**R1.6 回退（作者 2026-11-26 11:26：「这些显示装置我用不上了，去掉，其它的不要动」）**。
 
-场景 draw call **61**（上限 100）、整链 **105**（61+27+17），三角 **36,122**，帧率 144 fps 未降。
-设备验收 **54/54**、单测 **179 passed**、`tsc` 0 error；
+场景 draw call **57**（上限 100）、整链 **101**（57+27+17），三角 **33,210**，帧率 144 fps 未降。
+设备验收 **54/54**、单测 **167 passed**、`tsc` 0 error；
 d1 9/9 / d2 19/19 / env 23/23 / motion 17/17 / d3 11/11 / device 54/54 全绿；
 batch2 20/24（4 项失败 = 生产页统计空窗数据态，长期存在，与本批无关）。
 **2026-11-26 插入一次后端修复（`ffa8e67`）**：订单推进间隔 7200 s → 120 s（生产分析页 24 小时窗口因此恒空），
 ensure_orders 加逾期在制单自愈；pytest 25 → 28 passed（新增 `tests/test_orders.py`），见 §4 #17。
 **下一步仍是 D4 剩余（粒子与旋转光斑），之后 D5 界面层收尾、D6 性能与演示物料。**
-标签链：`v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准，**B 层厂区放大未实施**）→ `v0.4-density`（R1.6）。
+标签链：`v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准，**B 层厂区放大未实施**）→ `v0.4-density`（R1.6，代码已回退，标签保留为历史）。
 
 ---
 
@@ -52,7 +53,7 @@ ensure_orders 加逾期在制单自愈；pytest 25 → 28 passed（新增 `tests
 | HUD 青化 | tokens 深青色系 + 视口覆盖层 HUD 风格（`79bd4b5`） | 已完成 | — |
 | 场景减法 | 删中央通道灯带（`76051a6`）、车间中排柱（`76c032e`） | 已完成 | 同上提交 |
 | 视角校准 | 初始总览整机位 +x 平移 4，入场球心随 target 平移（`2c38108`） | 已完成 | — |
-| **R1.6 密度** | 每车间 47 装饰件 + 4 类 InstancedMesh + 环境层拾取遮挡（`4502540`，tag `v0.4-density`） | 已完成，§18 | `acceptance_phase4.md` §18 |
+| **R1.6 密度（已回退）** | 每车间 47 装饰件 + 4 类 InstancedMesh（`4502540`，tag `v0.4-density`）；作者 2026-11-26 要求去掉，代码已回退，只留环境层拾取遮挡 | 已回退，§18.6 | `acceptance_phase4.md` §18.6 |
 | R1.5 B 层 | 厂区 116×78 放大 + 月台/堆场 | **未实施**（作者未确认，FACTORY 仍 80×56） | `spec_phase4.md` R1.5 任务书 |
 | D4（剩余） | 粒子（火花/冷却液雾）与旋转光斑 | **未开始（下一步）** | `docs/spec_phase4.md` §3 |
 | D5 / D6 | 界面层收尾 / 性能与演示物料 | 部分由纯三维页先行落地，其余未做 | 同上 §3 |
@@ -69,7 +70,7 @@ ensure_orders 加逾期在制单自愈；pytest 25 → 28 passed（新增 `tests
 > 这批的三条实测结论推翻了规格原判断（`pg_total_relation_size` 只量父表、压缩**会**压小索引、压缩块**可写**），
 > 见偏差 D-27 / D-28 / D-30。别按旧文档的直觉再写一遍。
 
-### 1.3 第 4 阶段 B（展示）—— D0~D3 + 追加批 + D 批（R1 / R1.5 A / R2 / R3 / 顶部清理 / 亮化 / 展示页 / 减法 / 视角 / R1.6）全部已交付
+### 1.3 第 4 阶段 B（展示）—— D0~D3 + 追加批 + D 批（R1 / R1.5 A / R2 / R3 / 顶部清理 / 亮化 / 展示页 / 减法 / 视角 / R1.6）全部已交付（R1.6 已按作者要求回退）
 
 **D0 体检**（只产清单与基线，唯一代码改动是 dev-only `setCamera`，D-42）
 产出 `docs/audit_d0.md` 的 20 条问题清单（每条：截图文件 + 九宫格位置 + 现象 + 归属批次），
@@ -142,28 +143,26 @@ STOPPED 用实例 `scale` 缩 0、`frustumCulled=false`、道具不可单独拾�
 | 首屏可交互 | 562 ms | 1,227 ms | 未重测 | 未重测 | ≤3 s |
 
 追加批后场景 draw call 84、整链 155（84 场景 + 54 阴影 + 17 后处理），仍在 ≤100 预算内。
-**当前（R1.6 后）：scene 61 / shadow 27 / post 17 = 105，三角 36,122，fps 144.4。**
+**当前（R1.6 回退后）：scene 57 / shadow 27 / post 17 = 101，三角 33,210，fps 144.9。**
 R2/R3 把设备并成单 mesh 后场景调用反而从 84 降到 58，顶部清理再降到 57；
-R1.6 密度件 +4（4 个 InstancedMesh）回到 61。
+R1.6 密度件曾 +4（4 个 InstancedMesh）到 61 / 三角 36,122，2026-11-26 回退后回到 57 / 33,210。
 
 \* D0 的数字是 `autoReset` 默认口径（只反映末次 render），**与 D1 之后的数字不可相减**（D-45）。
 D1 起统一用原子探针 `__sceneDebug.profile()` 一次读齐四项；分三次读会因跨帧得到 215 ≠ 187 的假数。
 
-### 2.2 本轮复跑（2026-11-26 10:00，R1.6 收尾）
+### 2.2 本轮复跑（2026-11-26 11:30，R1.6 回退后）
 
 ```text
-cd frontend && npx tsc --noEmit          → 0 error
-cd frontend && npm run test -- --run     → 17 files / 179 tests passed（R1.6 新增 12 条）
-node scripts/acceptance-d1.mjs           → 9/9（bloom 阈值回 0.85）
-node scripts/acceptance-env.mjs          → 23/23（ENV_GROUP_BUDGET 6→10：6 合并组 + 4 实例化网格）
-node scripts/acceptance-motion.mjs       → 17/17
-node scripts/acceptance-d2.mjs           → 19/19
-node scripts/acceptance-d3.mjs           → 11/11（7 预设 / 8 站巡游，R1.5 后已同步）
+cd frontend && npx tsc -b                → 0 error
+cd frontend && npx vitest run            → 16 files / 167 tests passed（179 − 12 条密度用例）
+node scripts/acceptance-env.mjs          → 23/23（ENV_GROUP_BUDGET 回到 6：只剩 6 个合并组）
+node scripts/acceptance-d1.mjs           → 9/9（scene 57 / 三角 33,210 / 整链 101）
+node scripts/acceptance-d3.mjs           → 11/11（7 预设 / 8 站巡游 / 14 台命中 100%）
 node scripts/acceptance-device.mjs       → 54/54
-node scripts/acceptance-batch2.mjs       → 20/24（4 项失败 = 生产页统计空窗数据态 + 一次告警注入 422，与本批无关）
 ```
 
-R1.6 专项（§18）：装饰件点击 30 次 0 弹卡、光标全 default、设备 14/14 正常弹卡。
+回退前同一批脚本（2026-11-26 10:00，R1.6 收尾）的数字：179 tests、ENV_GROUP_BUDGET 10、scene 61 / 三角 36,122 / 整链 105。
+motion 17/17、d2 19/19、batch2 20/24 未受本次回退影响（只动 three/ 环境层与 propLayout），故按 10:00 的结论沿用。
 
 D3 交付时的完整验收输出留在 `output/logs/d3_acceptance.log`（**不进 git**，本地文件）：
 
@@ -308,13 +307,13 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 
 | 想知道 | 去哪 |
 |---|---|
-| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3）、§14（白底与去雾）、§15（R1 室内壳）、§18（R1.6 密度） |
+| 每批的验收原文、逐项 PASS 日志、截图对照 | `docs/acceptance_phase4.md` §10（D1）、§11（D2）、§12（D3）、§14（白底与去雾）、§15（R1 室内壳）、§18 与 §18.6（R1.6 密度及其回退） |
 | 施工规格：目标、七段字段、硬指标、验收命令 | `docs/spec_phase4.md` v4.0 |
 | D0 的 20 条问题清单 | `docs/audit_d0.md` |
 | D 批 R1 / R1.5 A / R2 / R3 / 顶部清理的验收原文与截图 | `docs/acceptance_phase4_d.md` |
 | 设备建模 v2 的判据（§10） | `docs/spec_phase4.md` §10 |
 | 偏差 D-37 ~ D-72（含每条为什么这么处置） | `docs/spec_phase4.md` 附录 B |
-| 三张版本标签 | `v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准）→ `v0.4-density`（R1.6） |
+| 三张版本标签 | `v0.4-indoor`（R1 室内壳）→ `v0.4-scale`（观看尺度校准）→ `v0.4-density`（R1.6，**代码已回退，标签仅作历史**） |
 | 后端与数据层的规格 | `docs/spec_phase2.md` v1.1（冻结） |
 | 三维场景与五页前端的实现基线 | `docs/spec_phase3.md` v1.1（冻结） |
 | 截图与日志 | `output/d0/`、`output/d1/`、`output/d2/`、`output/d3/`、`output/env/`、`output/d_batch/`、`output/device_r2/`、`output/device_r3/`、`output/device_clean/`（本地，不进 git） |
@@ -339,7 +338,7 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 | 删中央灯带 | `76051a6` | 走廊机位下竖白线（作者：没有作用） | 灯带 5→4 |
 | 删中排柱 | `76c032e` | 两线之间 4 根无支撑柱（作者：多余） | 柱列 3 排→2 排 |
 | 视角左移 | `2c38108` | overview 整机位 +x 平移 4，球心随 target 平移 | 墙角投影 offset 收敛 |
-| **R1.6 密度** | **`4502540`** | 每车间 47 件装饰件 + 4 类 InstancedMesh + env 拾取遮挡 + 光标修复 | §18：scene 61 / 三角 36,122 / fps 144.4；30 点击 0 弹卡 |
+| **R1.6 密度（已回退）** | **`4502540`** | 每车间 47 件装饰件 + 4 类 InstancedMesh，作者 2026-11-26 看过效果后要求去掉；代码回退到 `4502540^`，只留 env 拾取遮挡 | §18.6：scene 回到 57 / 三角 33,210 / 单测 167；d1 9/9 · env 23/23 · d3 11/11 · device 54/54 |
 
 **四点必须一起记住**（都是踩过的坑）：
 

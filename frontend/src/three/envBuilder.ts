@@ -23,7 +23,6 @@ import {
   type EnvLabelSpec,
   type EnvPart,
 } from './envLayout';
-import { DENSITY_UNIT_SHAPE, type DensityInstKind } from './propLayout';
 import { LINE_SCENARIOS } from './scenario';
 
 export interface EnvBuild {
@@ -31,8 +30,8 @@ export interface EnvBuild {
   kinds: string[];
   /** B1 的「维修中」标识（由 builders.ts 转成 CSS2D 标签） */
   maintenanceLabels: Array<{ x: number; y: number; z: number; text: string }>;
-  /** 各组实际合并后的绘制体数量（验收用：合并组 + 实例化网格总数，R1.6 起预算 10） */
-  drawables: Array<{ group: EnvGroup | 'labels' | 'instanced'; meshes: number }>;
+  /** 各组实际合并后的绘制体数量（验收用：必须 ≤6） */
+  drawables: Array<{ group: EnvGroup | 'labels'; meshes: number }>;
   /**
    * 剖切：让 `cut` 标记的墙段（见 envLayout.EnvPart.cut）整体不可见/恢复。
    * 用合并索引退化为同一点实现——不加材质、不加 draw call，
@@ -135,15 +134,12 @@ export function buildEnv(): EnvBuild {
 
   const env = buildEnvironment();
   const lineProps = buildLineProps(LINE_SCENARIOS);
-  // R1.6：带 inst 标记的密度件不进合并网格，按类别聚合成 InstancedMesh（作者指定四类）
-  const instancedParts = [...env.parts, ...lineProps.parts].filter((p) => p.inst) as Array<EnvPart & { inst: DensityInstKind }>;
-  const parts = [...env.parts, ...lineProps.parts].filter((p) => !p.inst);
+  const parts = [...env.parts, ...lineProps.parts];
   const labels = env.labels;
 
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
   const textures: THREE.Texture[] = [];
-  const instancedMeshList: THREE.InstancedMesh[] = []; // R1.6：实例化网格自己的 instance 缓冲也要释放
   const track = <T extends THREE.BufferGeometry>(g: T): T => {
     geometries.push(g);
     return g;
@@ -243,48 +239,6 @@ export function buildEnv(): EnvBuild {
     drawables.push({ group: cfg.group, meshes: 1 });
   }
 
-  // ---------- R1.6 实例化密度件（作者指定：配电柜/托盘/周转箱/气瓶各一个 InstancedMesh） ----------
-  // 复用 matte 材质（顶点色管线）：geometry 用单位体 + 白顶点色，逐实例走
-  // matrix（缩放）与 instanceColor（颜色），所以不新增材质；不投阴影（小件，
-  // 保住阴影 pass 的 draw call 不涨）。env root 不在拾取白名单里，hover 无反馈。
-  if (instancedParts.length) {
-    const matteMaterial = groups.find((g) => g.group === 'matte')!.material;
-    const byKind = new Map<DensityInstKind, Array<EnvPart & { inst: DensityInstKind }>>();
-    for (const p of instancedParts) {
-      const list = byKind.get(p.inst) ?? [];
-      list.push(p);
-      byKind.set(p.inst, list);
-    }
-    const instancedMeshes: Array<{ kind: DensityInstKind; mesh: THREE.InstancedMesh }> = [];
-    for (const [kind, list] of byKind) {
-      const shape = DENSITY_UNIT_SHAPE[kind];
-      const geo = track(shape === 'cyl' ? new THREE.CylinderGeometry(0.5, 0.5, 1, 10) : new THREE.BoxGeometry(1, 1, 1));
-      paint(geo, 0xffffff); // 白顶点色：材质 vertexColors 生效，颜色由 instanceColor 提供
-      const mesh = new THREE.InstancedMesh(geo, matteMaterial, list.length);
-      const m4 = new THREE.Matrix4();
-      const quat = new THREE.Quaternion();
-      const euler = new THREE.Euler();
-      const color = new THREE.Color();
-      list.forEach((p, i) => {
-        euler.set(p.rotX ?? 0, p.rotY ?? 0, p.rotZ ?? 0);
-        quat.setFromEuler(euler);
-        m4.compose(new THREE.Vector3(p.x, p.y, p.z), quat, new THREE.Vector3(p.sx, p.sy, p.sz));
-        mesh.setMatrixAt(i, m4);
-        mesh.setColorAt(i, color.setHex(p.color, THREE.SRGBColorSpace));
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.name = `env:inst:${kind}`;
-      mesh.castShadow = false;
-      mesh.receiveShadow = true;
-      mesh.frustumCulled = false; // 逐实例散布全场，默认包围球会误剔除
-      root.add(mesh);
-      instancedMeshList.push(mesh);
-      instancedMeshes.push({ kind, mesh });
-    }
-    drawables.push({ group: 'instanced', meshes: instancedMeshes.length });
-  }
-
   // ---------- 工位编号 / 产线名（一张图集 → 1 次 draw call） ----------
   {
     const atlas = makeLabelAtlas();
@@ -318,7 +272,6 @@ export function buildEnv(): EnvBuild {
     for (const g of geometries) g.dispose();
     for (const m of materials) m.dispose();
     for (const t of textures) t.dispose();
-    for (const im of instancedMeshList) im.dispose(); // instanceMatrix/instanceColor
   };
 
   return {
