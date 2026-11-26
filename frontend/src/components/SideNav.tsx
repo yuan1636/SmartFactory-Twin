@@ -10,7 +10,7 @@ const ITEMS: NavItem[] = [
   { to: '/devices', label: '设备监控' },
   { to: '/production', label: '生产分析' },
   { to: '/alerts', label: '告警与维护' },
-  { to: '/ai', label: 'AI 预测分析' },
+  { to: '/ai', label: '工厂日报' },
 ];
 
 export function SideNav() {

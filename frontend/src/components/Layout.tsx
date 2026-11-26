@@ -13,7 +13,7 @@ const TITLES: Array<{ prefix: string; title: string; crumb: string }> = [
   { prefix: '/devices', title: '设备监控中心', crumb: '页面二' },
   { prefix: '/production', title: '生产数据分析', crumb: '页面三' },
   { prefix: '/alerts', title: '设备告警与维护', crumb: '页面四 · 偏差 D-01 新增' },
-  { prefix: '/ai', title: 'AI 预测分析', crumb: '页面五 · 模型推理与真值对照' },
+  { prefix: '/ai', title: '工厂日报', crumb: '今天该管什么 · 结论 / 待办 / 交付风险 / 损失账' },
 ];
 
 export function Layout() {
