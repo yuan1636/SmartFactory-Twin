@@ -228,7 +228,7 @@ export interface InteriorResult {
 
 /**
  * 室内壳：两个车间各一套（墙 + 踢脚线 + 包柱 + 门窗洞 + 桁架 + 灯带）。
- * 灯带沿用既有的 emissive 组：四条产线正上方各一道 + 中央通道一道，共 5 道。
+ * 灯带沿用既有的 emissive 组：四条产线正上方各一道，共 4 道（中央通道那道已按作者 2026-11-26 要求删除）。
  */
 export function buildInterior(): InteriorResult {
   const parts: EnvPart[] = [];
@@ -292,14 +292,15 @@ export function buildInterior(): InteriorResult {
   // ---- 地面细节（R1.5 A 层，paint 组）----
   parts.push(...floorDetails());
 
-  // ---- 灯带（沿用 emissive 组，5 道）；灯管同样延长 3 m 顶进墙内，与地面色带一致 ----
+  // ---- 灯带（沿用 emissive 组，4 道：只照产线）；灯管同样延长 3 m 顶进墙内，与地面色带一致 ----
+  // 中央通道那道已删（作者 2026-11-26：「中间的白线没有作用」）——站在走廊机位看，
+  // 它在画面正中缩成一条竖白线，只添乱。以后要加，用 extendedLine() 同款写法。
   for (const strip of LINE_STRIPS) {
     const ext = extendedLine(strip);
     const mid = (ext.x1 + ext.x2) / 2;
     const len = Math.abs(ext.x2 - ext.x1);
     parts.push(box('emissive', INTERIOR_COLORS.lamp, mid, INTERIOR.lampY, strip.z, len, 0.12, 0.34));
   }
-  parts.push(box('emissive', INTERIOR_COLORS.lamp, 0, INTERIOR.lampY, 0, 0.34, 0.12, WORKSHOPS[0].sizeZ - 1));
 
   return {
     parts,

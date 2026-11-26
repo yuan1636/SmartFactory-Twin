@@ -51,8 +51,8 @@ describe('环境层（本批）', () => {
     expect(env.kinds.length).toBeGreaterThanOrEqual(9);
   });
 
-  it('灯带 = 5 道（四条线 + 通道）；屋架与天花桥架类别已按作者要求删除', () => {
-    expect(env.parts.filter((p) => p.group === 'emissive')).toHaveLength(LINE_STRIPS.length + 1);
+  it('灯带 = 4 道（只照产线；中央通道那道已按作者 2026-11-26 要求删除）', () => {
+    expect(env.parts.filter((p) => p.group === 'emissive')).toHaveLength(LINE_STRIPS.length);
     expect(env.kinds, '顶部深色杆件不许加回来').not.toContain('trusses');
     expect(env.kinds, '天花板管道/桥架不许加回来').not.toContain('cable-tray');
   });

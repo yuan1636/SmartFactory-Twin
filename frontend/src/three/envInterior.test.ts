@@ -128,9 +128,9 @@ describe('室内壳（D 批 R1）', () => {
     for (const g of groups) expect(['matte', 'metal', 'paint', 'emissive', 'glass']).toContain(g);
   });
 
-  it('灯带 5 道，标高由 lampY 独立定义（屋架删除后不再依赖下弦高度）', () => {
+  it('灯带 4 道（只照产线；中央通道那道已按作者 2026-11-26 要求删除），标高由 lampY 独立定义', () => {
     const lamps = parts.filter((p) => p.group === 'emissive');
-    expect(lamps).toHaveLength(LINE_STRIPS.length + 1);
+    expect(lamps).toHaveLength(LINE_STRIPS.length);
     for (const p of lamps) expect(p.y).toBe(INTERIOR.lampY);
   });
 
