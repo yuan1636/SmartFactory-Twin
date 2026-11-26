@@ -366,3 +366,30 @@ D1 的 9 项在 `output/logs/d1_acceptance.log`，D2 的 19 项在 `output/logs/
 4. **D3 验收脚本已过期**：R1.5 A 把预设从 5 扩到 7，`acceptance-d3.mjs` 的 `LABEL` 仍写死 5 个，导致 3 项断言失效（预设数量 / 20 对切换 / 入场 `lastTransitionMs` 被加载期 1000 ms 过渡覆盖）。这与设备建模无关，**14/14 点击命中复测通过**。下一批同步脚本到 7 预设再重跑。
 
 **仍未做**：盲测（3 人、≥2 人说「工厂」）、D4 粒子与光斑、D5 收尾、D6 演示物料、R1.5 B 层厂区放大（作者未确认）。顶部不铺屋面板的白背景问题已随亮化批消除（背景改暗青）。
+
+---
+
+## 9. 2026-11-26 下午：产量接上设备因果链（D-75）
+
+> 作者要求「让设备状态/异常真正影响产量与良率」。改前 `orders.advance()` 是纯计时器（每 120 秒每线 +1 件），
+> `injector.apply_active()` 只改指标值，于是 `/stats` 显示 86.7% 利用率、订单却按 100% 满速推进。
+
+| 项 | 落地 |
+|---|---|
+| 新增 `data_pipeline/line_pace.py` | `useful_rate` = 该线可用设备数 / 该线设备数（可用 = 状态机 RUNNING 且 `devices.status` 非 STOPPED/MAINTENANCE）；**输送机 CONV 不可用则整线 0**（作者裁定）；节拍 = 30 件/h × useful_rate × 异常系数 |
+| 异常惩罚（同线取最严，不叠加） | VIB_SPIKE 0.85 / 合格率 92%；TEMP_DRIFT 0.75 / 90%；CURRENT_ABNORMAL 0.90 / 94%；ALARM 不减可用率 |
+| `orders.py` | `advance(now, produced_by_line, rate_by_line)` 按件累加；`PieceAccumulator` 保留小数余量；完工按累计合格数结算；`ADVANCE_INTERVAL_SECONDS` → `RATED_SECONDS_PER_PIECE`（仅文档口径） |
+| `simulator.py` | 每拍算节拍、喂给推进器；被人工停用的设备遥测一并写 STOPPED（复用 `apply_stopped_physics`），使 utilization 与节拍同源 |
+| 僵尸注入守卫 | `ended_at IS NULL` 且超过该类型配置时长的记录自动失效（实测清理 6 条被强杀模拟器留下的僵尸窗口） |
+
+**实测（日志在 `output/logs/`，本地不进 git）**
+- 改前 10 分 42 秒：每线 +5 件（计时器恒速），同窗口 utilization 92.86% —— 两个口径互不相干。
+- 改后同长度窗口：每线 +5 件，但 pace 随状态变化：RUNNING 120/h、异常 112~117/h、停线 90/h、**IDLE+STOPPED 120 拍 pace=0/h**。
+- 停 CONV-01（`PATCH /devices/CONV-01/status` → MAINTENANCE）5 分 5 秒：LINE-A1 7480→7480（+0），A2/B1/B2 各 +2；`/stats?line_id=LINE-A1` utilization **0.6667**。
+- CNC-02 注入 VIB_SPIKE 3 分钟：pace 120→**116/h**（25.5+30+30+30，与 0.85 系数吻合）。
+- 全厂 IDLE+STOPPED 4 分钟窗口：utilization **0.0077**，三线产量冻结。
+- 合格率 92% 口径由单测固定（120 件 → 110 合格）；3 分钟窗口仅 1~2 件，实测无法区分 92%/97%，如实记为不可测。
+
+**测试**：`tests/test_line_pace.py` 9 条（占比 / 输送机门控 / ALARM / 相位 / 异常取严 / 辅助设备不参与）+ `test_orders.py` 5 条累加器用例（含 useful_rate=0.5 时 10 分钟约一半、100 分钟 ±10%）；pytest **41 passed**。
+
+**操作提醒**：状态机是全厂同相位的 30 分钟周期（RUNNING 26 / IDLE 3 / STOPPED 1），做产量对比实验必须避开 26~30 分钟这一段，否则四线会同时归零（第一轮停线实验就撞上了，日志已作废重跑）。
