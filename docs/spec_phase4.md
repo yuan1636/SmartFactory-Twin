@@ -1021,6 +1021,8 @@ node scripts/audit-shot.mjs            # → output/d0/01_overview.png … 06_al
 | **D-82** | 规格 §4 第 12/13 条一直没落地（D4 剩余）：车间里只有物料/滚筒/机械臂三套运动，静止看不出「火花、扫场灯」这类工况暗示；且 14 台机械臂初相位全是 0，**同起同落像广播体操** | 批 D4 粒子与光斑 | 新增 `frontend/src/three/particles.ts`：①**火花** 4 台 CNC × 60 颗，从**排屑口外侧**（x+2.15）向上抛、重力回落——第一版撒在机身中部，被封闭外壳整个挡住，近景一颗都看不见；点尺寸 0.095→**0.22**（40 m 外 0.095 不足一像素）；②**冷却液雾** 4 台 × 24 团，0.18~0.3 m/s 上升、寿命 2.4~3.6 s，停机不吐雾；③**旋转光斑** 每车间一盏，**贴图 + InstancedMesh 面片**（禁用 SpotLight：每盏都会触发阴影重算），两盏角速度 0.42/0.55 rad/s 错开。三套合计 **3 次 draw call**，数量按 `min(1, 1280/width)` 缩放，`__sceneDebug.setParticles()` 一键关闭。同时修 `motion.ts` 机械臂初相位：按设备 ID 派生 `rnd()*2π` 播种，实测四台角度 [-0.48, 0.14, -0.06, -0.41]（中位差 **0.42 rad** > 0.1）。实测：scene 83→**86**（≤90）、整链 205、三角 60,554→**60,558**、fps 145 开/关都是 145（144 Hz 屏上限，降幅 0%）；`scripts/acceptance-d4.mjs` **9/9**、motion 17/17、d3 11/11 |
 
 
+| **D-83** | 规格 §4 第 15 条「组件内硬编码色值 0 处」与第 16 条「KPI 数字跳动宽度差 <1 px」在 D5 一直没验；`Production.tsx` / `AiInsight.tsx` 里散落 7 处 `#rrggbb` 字面量 | 批 D5 界面层（**部分完成**） | ①色值集中：新增 `frontend/src/styles/chartColors.ts`——ECharts 走 canvas 不认 CSS 变量，这些值只能以 JS 常量存在，所以集中到一处并注明与 `tokens.css` 的对应；7 处全部改为引用，`grep -rE '#[0-9a-fA-F]{6}' frontend/src/{components,pages}` **命中 0**。②KPI 宽度：1,234 与 9,876 实测同为 **77.08 px**（差 0），`font-variant-numeric=tabular-nums`。③新增 `scripts/acceptance-d5.mjs`（宽度 / 连接 3 态 / 封面）与 `scripts/probe-conn.mjs`（250 ms 采样连接指示器）。**未完成**：连接 3 态只实测到"已连接"——CDP 的 `emulateNetworkConditions` 只影响新请求，掐不断已建立的 WebSocket（实测文字始终停在"实时已连接"），必须真停后端才有意义；封面 `output/d5/cover_1680x1050.png` 是 dev 构建且带 fps 角标，不满足"生产构建 + 无角标"，留 D6 用 `vite preview` 重出 |
+
 ## 附录 C 冻结记录
 
 **2026-11-25，作者五条决策（原文要点）：**
