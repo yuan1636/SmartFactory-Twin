@@ -259,10 +259,21 @@ check(
 check('损失账注明了假设值', (await session.evaluate(`document.querySelector('[data-report-block="loss"]')?.innerText ?? ''`)).includes('假设值'));
 
 // ---------------------------------------------------------------- //
-// 6. 页底公式区：八条口径齐全
+// 6. 页底公式区：默认收起，展开后八条口径齐全（D-81）
 // ---------------------------------------------------------------- //
+// 收起状态下 <details> 内的 innerText 是空的，所以"内容齐全"必须在展开之后才判。
+// 先断言收起本身，再展开断言内容——两条都不能省：只判内容不判收起，改回常显也能过。
+const formulaOpen = await session.evaluate(`document.querySelector('[data-report-formula]')?.open ?? null`);
+check('公式区默认收起（与模型详情同一种处理）', formulaOpen === false, `open=${formulaOpen}`);
+const hint = await session.evaluate(
+  `document.querySelector('[data-report-formula] summary')?.innerText ?? ''`,
+);
+check('收起时仍标明系数是假设值', hint.includes('假设值'), hint.replace(/\n/g, ' ').slice(0, 40));
+
+await session.evaluate(`document.querySelector('[data-report-formula]').open = true`);
+await sleep(400);
 const formula = await session.evaluate(`document.querySelector('[data-report-formula]')?.innerText ?? ''`);
-check('公式区在页面底部且可见', formula.length > 100);
+check('展开后公式区内容齐全', formula.length > 100, `${formula.length} 字`);
 for (const keyword of ['节拍', '风险分', '异常持续分钟', '预计影响件数', '建议动作', '外推完成时间', '本月影响产量', '折合金额']) {
   check(`公式区有「${keyword}」`, formula.includes(keyword));
 }
@@ -279,8 +290,14 @@ try {
   writeFileSync(CONFIG_PATH, `${JSON.stringify(zero, null, 2)}\n`, 'utf8');
 
   await openReport();
-  await sleep(2500);
-  const missing = await session.evaluate(`!!document.querySelector('[data-report-price-missing]')`);
+  // 页面要重新拉一次 /report/config 才知道单价变成 0。固定 sleep 2500 实测偶尔不够
+  // （2026-11-27 同版本连跑三次，两次红）。改为等元素出现，最多 12 秒。
+  let missing = false;
+  for (let i = 0; i < 24; i += 1) {
+    missing = await session.evaluate(`!!document.querySelector('[data-report-price-missing]')`);
+    if (missing) break;
+    await sleep(500);
+  }
   check('单价为 0 时显示「未配置单价」', missing);
   const amountCell = (await text('[data-report-loss="amount"]'))?.trim() ?? '';
   check('单价为 0 时不显示 0 元', amountCell === '未配置单价', `实际「${amountCell}」`);
@@ -290,9 +307,17 @@ try {
 } finally {
   writeFileSync(CONFIG_PATH, originalConfig, 'utf8');
   await openReport();
-  await sleep(2000);
 }
-check('还原单价后金额重新出现', digits(await text('[data-report-loss="amount"]')) !== '', '');
+// 还原后页面要重新拉一次 /report/config。原来固定等 2 秒，实测偶发不够
+// （2026-11-27 跑就红过一次，同一版本紧接着重跑又绿）——固定 sleep 判时序本来就不稳，
+// 改成轮询等待，最多 12 秒。
+let restored = '';
+for (let i = 0; i < 20; i += 1) {
+  await sleep(600);
+  restored = digits(await text('[data-report-loss="amount"]'));
+  if (restored !== '') break;
+}
+check('还原单价后金额重新出现', restored !== '', restored ? `¥${restored}` : '12 秒内仍为空');
 
 // ---------------------------------------------------------------- //
 // 8. 展开折叠区：模型指标与接口一致

@@ -173,8 +173,11 @@ function metricCards(info: ModelInfo) {
 }
 
 export default function AiInsight() {
-  // ---------- 折叠区（模型详情）的状态 ----------
+  // ---------- 折叠区（模型详情 / 页底公式）的状态 ----------
   const [modelsOpen, setModelsOpen] = useState(false);
+  // 公式区跟模型详情同一种处理：默认收起，避免首屏被 8 条算式和系数假设值撑长。
+  // 需要复算的人点开就有，不需要的人不用滚动路过。
+  const [formulaOpen, setFormulaOpen] = useState(false);
   const [deviceId, setDeviceId] = useState('CNC-01');
   const [range, setRange] = useState<RangeKey>('1h');
 
@@ -660,7 +663,7 @@ export default function AiInsight() {
             {advice}
           </h2>
           <div className="report-hero__note">
-            近 {windowMin ?? '—'} 分钟巡检窗口 · 系数为假设值（见页底公式区）· 数据为模拟器注入，非真实工厂
+            近 {windowMin ?? '—'} 分钟巡检窗口 · 系数为假设值（展开页底公式区可复算）· 数据为模拟器注入，非真实工厂
           </div>
         </div>
         <div className="report-hero__stats">
@@ -1041,14 +1044,22 @@ export default function AiInsight() {
         </div>
       </details>
 
-      {/* ---------------- 6. 公式与来源（页底） ---------------- */}
-      <section className="card report-formula" data-report-formula>
-        <div className="card__title-row">
-          <h3 className="card__title">公式与数据来源</h3>
-          <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>
-            每一行都能按这里的算式复算
+      {/* ---------------- 6. 公式与来源（页底，默认折叠，D-81） ---------------- */}
+      <details
+        className="card report-fold report-formula"
+        data-report-formula
+        data-open={formulaOpen ? 'true' : 'false'}
+        onToggle={(event) => setFormulaOpen(event.currentTarget.open)}
+      >
+        <summary className="report-fold__summary">
+          公式与数据来源
+          {/* 收起状态下也必须能读到「假设值」——这是页面的合规声明，
+              不能因为折叠就消失（§19.2 要求系数性质随时可见） */}
+          <span className="report-fold__hint">
+            {formulaOpen ? '点击收起' : '系数均为假设值 · 点击展开复算'}
           </span>
-        </div>
+        </summary>
+        <div className="report-fold__body">
         <ol className="report-formula__list">
           <li>
             <b>节拍</b> = 该线最新订单的 planned_quantity ÷ (planned_end − planned_start)，取不到时用{' '}
@@ -1110,7 +1121,8 @@ export default function AiInsight() {
           配置文件：{cfg?.source.file ?? 'config/report.json'}（{cfg?.source.kind === 'assumption' ? '假设值' : '—'}）。
           三维场景与遥测数据由模拟器生成，仅用于演示，不代表真实工厂。
         </div>
-      </section>
+        </div>
+      </details>
 
       {windowAnoms.data && windowAnoms.data.items.length === 0 ? (
         <EmptyState title="数据不足，无法给出建议" hint="巡检窗口内没有异常记录，待办与结论不会凭空生成。" />
