@@ -463,3 +463,18 @@ node scripts/acceptance-device.mjs   → 54/54（14 台 / 40,256 三角，单台
 全部并入既有 shell/matte/metal/glass 组，**draw call 零增加**。单测 `envArch.test.ts` 8 条（厂界、夹层不压设备、metal 顶部无杆件、两栋体量互不相交）。
 
 **实测**：scene draw call **83**、shadow 102、整链 202、三角 58,954 → **60,554**、fps 144.9；单测 187 → **195**；env 验收前三项通过（类别 22、合并组 7、scene 83 ≤ 100），后段被 HMR 重载打断，截图人工核过：`output/env_b2b_overview2.png`、`env_b2b_wsb.png`、`env_b2b_wsa.png`。
+
+---
+
+## 11. 2026-11-27 批 D4：粒子与旋转光斑（D-82）
+
+| 项 | 落地 |
+|---|---|
+| 火花 | 4 台 CNC × 60 颗，从排屑口外侧（x+2.15）上抛受重力回落；尺寸 0.22（0.095 在 40 m 外不足一像素） |
+| 冷却液雾 | 4 台 × 24 团，上升 0.18~0.3 m/s、寿命 2.4~3.6 s，停机不吐雾 |
+| 旋转光斑 | 每车间一盏，贴图 + InstancedMesh（禁用 SpotLight，避免阴影重算），两盏 0.42/0.55 rad/s |
+| 机械臂相位 | 原来全为 0（14 台同起同落），改按设备 ID 派生播种；实测中位差 **0.42 rad** |
+| 开关 | `__sceneDebug.setParticles(false/true)`，关闭后 scene draw call 86→83 |
+
+实测：scene **86**（≤90 的 D-52 阈值）、整链 205、三角 60,558、fps 145（开/关相同，144 Hz 屏上限）；
+`acceptance-d4.mjs` **9/9**、motion 17/17、d3 11/11、单测 195。

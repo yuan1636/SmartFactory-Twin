@@ -221,7 +221,12 @@ export function createMotion(build: FactoryBuild): FactoryMotion {
   for (const [deviceId, rig] of build.rollers) {
     rollerAngles.set(deviceId, { rig, angle: 0, spinning: false });
   }
-  for (const deviceId of build.arms.keys()) armPhase.set(deviceId, 0);
+  // 机械臂初相位逐台错开：14 台从 0 起摆就是广播体操（规格 §4 第 12 条要求任意两组相位差 >0.1 rad）。
+  // 取值用设备 ID 派生，种子确定、脚本可复现；摆幅在 update 里也逐台不同，两者叠加才不会"齐步走"。
+  for (const deviceId of build.arms.keys()) {
+    const rnd = seededRandom(deviceId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0) * 131);
+    armPhase.set(deviceId, rnd() * Math.PI * 2);
+  }
 
   const writeItems = (line: LineRuntime) => {
     for (let i = 0; i < line.itemXs.length; i += 1) {

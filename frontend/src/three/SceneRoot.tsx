@@ -20,6 +20,7 @@ import { CAMERA_PRESETS, DEFAULT_FOV, ENTRANCE_PATH, ENTRANCE_START, ORBIT_LIMIT
 import { createLabelRenderer, setLabelShown } from './labels';
 import { DEVICE_LAYOUT, DEVICE_SIZES, deviceBox, deviceTypeOf, sizeKeyOf } from './layout';
 import { createMotion, type MotionSnapshot } from './motion';
+import { createParticles } from './particles';
 import { createPostFx, POSTFX, type PostFx } from './postfx';
 import { LINE_SCENARIOS, overriddenState, scenarioBadgeText } from './scenario';
 import { SKY_CLEAR_HEX, SKY_INTENSITY, makeSkyTexture } from './sky';
@@ -305,6 +306,9 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 
     // 产线运行动画（规格 6.7）。每帧只读一次 store，14 台设备共用同一个快照
     const motion = createMotion(build);
+    // 粒子与旋转光斑（D4）：3 次绘制，数量随分辨率缩放，可在调试面板一键关闭
+    const particles = createParticles(build);
+    scene.add(particles.group);
     let frameState = readStore();
     /**
      * 三维画面的"有效状态" = 演示工况覆盖 ?? 真实 WS 状态。
@@ -668,6 +672,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       }
 
       motion.update(dt, stateOf);
+      particles.update(dt, stateOf);
       animateMaterial(t);
       applyCutaway();
       controls.update();
@@ -686,6 +691,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
 
     // 先同步渲染一帧：无头浏览器 / 后台标签页里 rAF 可能被节流，画布与 draw call 仍要能读出来
     motion.update(0, stateOf);
+    particles.update(0, stateOf);
     controls.update();
     renderFrame();
     labelRenderer.render(scene, camera);
@@ -869,6 +875,9 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
         /** 环境层类别与各组绘制体数量：一物一 mesh 会在这里露馅 */
         env: () => ({ kinds: build.envKinds, drawables: build.envDrawables }),
         lineMotion: () => motion.snapshot(),
+        /** 粒子探针：绘制次数、是否开启、关闭/开启（验收与演示都从这一个口子进） */
+        particles: () => ({ drawCalls: particles.drawCalls, enabled: particles.enabled, phases: particles.phases() }),
+        setParticles: (on: boolean) => particles.setEnabled(on),
         setCamera: (pose: CameraPose) => moveTo(pose, DUR_SETCAM),
         /**
          * 材质探针：查一台设备实际拿到的贴图与参数。
@@ -952,6 +961,7 @@ const SceneRoot = forwardRef<SceneHandle, SceneRootProps>(function SceneRoot(
       renderer.domElement.removeEventListener('wheel', onWheel);
       controls.dispose();
       motion.dispose();
+      particles.dispose();
       postfx.dispose();
       build.dispose();
       // 批 1 新增的两份资源：环境贴图（PMREM target）与接触阴影（合并几何 + 贴图）
