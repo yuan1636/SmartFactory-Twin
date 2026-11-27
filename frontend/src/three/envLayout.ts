@@ -15,6 +15,7 @@
 
 import { DEVICE_LAYOUT, FACTORY, LINE_STRIPS, POWER_STATION, WORKSHOPS } from './layout';
 import { buildInterior } from './envInterior';
+import { buildArch } from './envArch';
 import { buildSigns } from './propLayout';
 import type { LineScenario } from './scenario';
 
@@ -493,8 +494,10 @@ export interface EnvironmentResult {
 /** 环境层三件套（不含产线道具）：给单测与验收断言"类别齐不齐"用 */
 export function buildEnvironment(): EnvironmentResult {
   const interior = buildInterior();
+  const arch = buildArch();
   const parts: EnvPart[] = [
     ...interior.parts,
+    ...arch.parts,
     ...buildFloorPaint(),
     ...buildOffice(),
     ...buildOuterProps(),
@@ -506,6 +509,7 @@ export function buildEnvironment(): EnvironmentResult {
     labels: buildStationLabels(),
     kinds: [
       ...interior.kinds,
+      ...arch.kinds,
       'floor-paint',
       'office',
       'outer-racks',
