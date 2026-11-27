@@ -11,6 +11,7 @@ import { usePolling } from '../hooks/usePolling';
 import { apiGet, isoWindow } from '../services/api';
 import { formatNumber, formatPercent, formatTime } from '../services/format';
 import type { OrderItem, Page, ProductionStats } from '../services/types';
+import { CHART_COLORS } from '../styles/chartColors';
 
 /** 四条产线（种子数据固定）。名称用短号，柱状图 x 轴放得下。 */
 const LINES: Array<{ id: string; label: string }> = [
@@ -73,12 +74,12 @@ export default function Production() {
           {
             name: '计划产量',
             data: (perLine.data ?? []).map((s) => s.planned_quantity),
-            color: '#2b3f57',
+            color: CHART_COLORS.planned,
           },
           {
             name: '实际产量',
             data: (perLine.data ?? []).map((s) => s.actual_quantity),
-            color: '#3b82f6',
+            color: CHART_COLORS.primary,
           },
         ],
       ),

@@ -478,3 +478,18 @@ node scripts/acceptance-device.mjs   → 54/54（14 台 / 40,256 三角，单台
 
 实测：scene **86**（≤90 的 D-52 阈值）、整链 205、三角 60,558、fps 145（开/关相同，144 Hz 屏上限）；
 `acceptance-d4.mjs` **9/9**、motion 17/17、d3 11/11、单测 195。
+
+---
+
+## 12. 2026-11-27 批 D5：界面层（**部分完成**，收尾时停在半路）
+
+已完成：
+- **色值集中**：新增 `frontend/src/styles/chartColors.ts`，`Production.tsx` / `AiInsight.tsx` 共 7 处 `#rrggbb` 全部改为引用；`grep -rE '#[0-9a-fA-F]{6}' frontend/src/{components,pages}` 命中 **0**。
+- **KPI 宽度**：实测 1,234 与 9,876 同为 **77.08 px**（差 0），`font-variant-numeric=tabular-nums`。
+- 新增 `scripts/acceptance-d5.mjs`（宽度 / 连接 3 态 / 封面，5 项）+ `scripts/probe-conn.mjs`（250 ms 采样连接指示器）。
+- 单测保持 **195 passed**、`tsc` 0 error。
+
+未完成（下一窗口接着做）：
+1. **连接 3 态只验到 1 态**：CDP `emulateNetworkConditions` 掐不断已建立的 WebSocket，实测文字始终"实时已连接"。要真停后端再读（用 `probe-conn.mjs` 读时间线），本轮收尾没跑。
+2. **封面不达标**：`output/d5/cover_1680x1050.png` 是 1680×1050 的 **dev 构建**截图，带 fps 角标；规格要求生产构建（`npm run build` + `vite preview`）且无角标，留到 D6。
+3. **D6 全部未做**：弱机（CPU 4×）帧率、连续 3 分钟稳定性、首屏 ≤3 s 复测、断网 5 s 出状态、录屏 + 5 张精修截图 + GIF。

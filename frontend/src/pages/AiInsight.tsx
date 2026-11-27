@@ -61,6 +61,7 @@ import {
   type DeliveryRow,
   type TodoRow,
 } from '../utils/dailyReport';
+import { CHART_COLORS } from '../styles/chartColors';
 
 const LIST_PAGE = 100;
 /** 接口单页上限 200；本月异常已超 1000 条，损失账必须翻页取全 */
@@ -510,8 +511,8 @@ export default function AiInsight() {
   const compareChart = useMemo(
     () =>
       groupedBarOption(compare.categories, [
-        { name: '异常真值条数', data: compare.truth, color: '#3b82f6' },
-        { name: '阈值告警条数', data: compare.alarm, color: '#ef4444' },
+        { name: '异常真值条数', data: compare.truth, color: CHART_COLORS.primary },
+        { name: '阈值告警条数', data: compare.alarm, color: CHART_COLORS.danger },
       ]),
     [compare],
   );
@@ -873,15 +874,15 @@ export default function AiInsight() {
                       <div className="mono-sm" style={{ lineHeight: 1.6 }}>
                         <span data-ml-confusion="tn">TN {formatNumber(confusion.data.matrix[0][0])}</span>
                         {' · '}
-                        <span data-ml-confusion="fp" style={{ color: '#fbbf24' }}>
+                        <span data-ml-confusion="fp" style={{ color: CHART_COLORS.falsePositive }}>
                           FP {formatNumber(confusion.data.matrix[0][1])}
                         </span>
                         {' · '}
-                        <span data-ml-confusion="fn" style={{ color: '#fca5a5' }}>
+                        <span data-ml-confusion="fn" style={{ color: CHART_COLORS.falseNegative }}>
                           FN {formatNumber(confusion.data.matrix[1][0])}
                         </span>
                         {' · '}
-                        <span data-ml-confusion="tp" style={{ color: '#86efac' }}>
+                        <span data-ml-confusion="tp" style={{ color: CHART_COLORS.truePositive }}>
                           TP {formatNumber(confusion.data.matrix[1][1])}
                         </span>
                       </div>
